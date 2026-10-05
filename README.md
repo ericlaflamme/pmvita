@@ -31,7 +31,7 @@ You'll need a Vita that's already homebrew-enabled (h-encore/HENkaku) with VitaS
    - `PaperMarioVita.vpk`
    - Your own ROM, named exactly one of: `Paper Mario (USA).z64`, `baserom.us.z64`, `pm64.z64`, or `papermario.z64`. Same rule as the Legal Notice above, your own dump, not a downloaded one.
 4. Back in VitaShell, go into `ux0:data/papership`, highlight `PaperMarioVita.vpk`, and press **X**. Press **X** again to accept the extended-permissions prompt. That installs the app. The `.vpk` file itself can stay in the folder or be deleted afterward, doesn't matter.
-5. Launch Paper Mario from the LiveArea like any other app. First boot creates `log.txt`, `crash.log`, and a `shader_cache` folder in `ux0:data/papership` on its own. You don't need to make those.
+5. Launch Paper Mario from the LiveArea like any other app. First boot creates `log.txt`, `crash.log`, and a `shadercache` folder in `ux0:data/papership` on its own. You don't need to make those.
 
 ## Updating
 
@@ -65,10 +65,31 @@ Done so far:
 - Fixed a stray memory clear on every pause
 - Logs now open with a build stamp
 - Fixed Bowser's fire breath effect
+- `papership.o2r` ships inside the VPK, so a fresh install only needs the VPK and your ROM
+- Compiled shaders are saved to `ux0:data/papership/shadercache`, so the hitch the first time a new effect appears only happens once
+- Fixed the freeze when equipping badges
+- Fixed Merlee's ritual card graphics
+- Enemies drop coins and hearts again
+- Fixed the Chuck Quizmo quiz setup
+- Fixed map echo and reverb settings
+- Fixed the Bow hiding check
+- Screen wipes and dark rooms cover the full widescreen frame
+- Glow effects around lights and stars draw correctly
+- Scrolling textures (conveyors, water, smoke) no longer jump or tear
+- Tubba Blubba's bridges and floors draw correctly
+- Fixed the crash on the way to Chapter 5 and the Lava Piranha fight's vines
+- Fixed the whale's body stretching across the screen
+- Fixed the giant brown polygons near the Munchlesia in Jade Jungle
+- Chapter 5 water, lava, and grass colors are correct
+- Water Block, the Stop Watch, and the whirlwind and lightning effects draw correctly
+- Dark rooms with Watt light up around the player instead of the reverse
+- Sprite lighting in shaded rooms is no longer inverted
+- The castle liftoff smoke in the intro and the Dry Dry Desert tornado draw with both texture layers again
+
 
 Still to do:
 - The intro's staged cutscene (Bowser, Kammy, and the Star Rod, between the curtains) still renders boxed at 4:3 inside the widescreen frame
-- Broader testing across areas, battles, and menus beyond the first area
+- Broader testing from Chapter 5 onward
 - General playthrough coverage
 
 ## Known Issues
@@ -76,8 +97,8 @@ Still to do:
 - The intro's staged cutscene (the theater scene with character models, not the starry-sky narration) renders at 4:3 inside the wider frame around it.
 - Menus, text boxes, and the HUD stay at 4:3 by design; only the 3D world and full-frame backgrounds go widescreen.
 - Backgrounds that use the wavy-effect renderer (a handful of areas) aren't widened yet.
-- Noticeable stutter during some area transitions (e.g. mid-intro, when the cutscene changes areas). This looks like real load time reading assets off the memory card rather than a bug, but hasn't been optimized.
-- The castle in the intro has texture banding.
+- Noticeable stutter during some area transitions (e.g. mid-intro, when the cutscene changes areas). This is load time reading assets off the memory card and hasn't been optimized.
+- Sushie's Squirt is missing its water trail; only the splash at the front draws.
 - Pause cleanup can still free a stale HUD element id, logged as `[hudfree]`.
 
 ## Building
@@ -103,7 +124,7 @@ You'll need a **US** Paper Mario ROM in `.z64` format to actually run the game.
 
 - A homebrew-enabled PS Vita or PS TV
 - [VitaSDK](https://vitasdk.org/)
-- vitaGL, vitaShaRK, math-neon (all available through `vdpm`)
+- vitaGL, vitaShaRK, math-neon, and `sdl2_vitagl` (all available through `vdpm`). The plain `sdl2` package won't work: the game opens a 0x0 window with it.
 
 ## Layout
 
