@@ -41,6 +41,17 @@ If `ux0:data/papership` still has a `papership.o2r` from an older version, delet
 
 Your save is safe either way. It lives at `ux0:data/papership/papership_save.bin`, and isn't part of the app package, so installing an update or even deleting the app doesn't touch it.
 
+## HD Texture Pack (optional)
+
+An HD texture pack made by **MasterKillua** is available on the project's [Discord](https://discord.gg/gxtYHhND6). It isn't included in this repository or in the VPK.
+
+1. Download the pack (an `.o2r` file) from the Discord.
+2. Launch the game once so it creates the `ux0:data/papership/mods` folder, or create it yourself in VitaShell.
+3. Copy the `.o2r` file into `ux0:data/papership/mods`.
+4. Launch the game. Every `.o2r` in `mods` is loaded at startup, and HD textures are enabled by default.
+
+To go back to the original textures, remove the file from `mods`.
+
 ## Current Status
 
 Done so far:
@@ -140,6 +151,7 @@ You'll need a **US** Paper Mario ROM in `.z64` format to actually run the game.
 
 - **[kaziema](https://github.com/kaziema)**: PS Vita port
 - **[versacepapermario](https://github.com/versacepapermario)**: PaperShip, the port this is built from
+- **MasterKillua**: HD texture pack
 - [Paper Mario Decompilation Team](https://github.com/pmret/papermario): the decomp
 - [Rinnegatamante](https://github.com/Rinnegatamante): vitaGL, and the Vita ports this platform layer is built from
 - [libultraship / Ship of Harkinian Team](https://github.com/HarbourMasters): rendering engine
