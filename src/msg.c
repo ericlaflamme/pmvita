@@ -1089,6 +1089,10 @@ void msg_copy_to_print_buffer(MessagePrintState* printer, s32 arg1, s32 arg2) {
                         romEnd = icon_ROM_START + gItemIconPaletteOffsets[offset] + 0x20;
                         dma_copy(icon_ROM_START + gItemIconPaletteOffsets[offset],
                                  romEnd, D_8015C7E0);
+#ifdef PORT
+                        port_hd_icon_loaded(D_80159B50, gItemIconRasterOffsets[offset], 0x200);
+                        port_hd_icon_loaded(D_8015C7E0, gItemIconPaletteOffsets[offset], 0x20);
+#endif
                         printer->curPrintDelay = printer->printDelayTime;
                         if (--arg1 <= 0) {
                             printer->delayFlags |= MSG_DELAY_FLAG_1;

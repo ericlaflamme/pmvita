@@ -398,6 +398,7 @@ void hud_element_load_script(HudElement* hudElement, HudScript* anim) {
 #endif
 #ifdef PORT
                         nuPiReadRom(resolve_rom_offset(icon_ROM_START + raster), entry->data, gHudElementSizes[preset].size);
+                        port_hd_icon_loaded(entry->data, raster, gHudElementSizes[preset].size);
                         port_hud_record_load(entry, gHudElementSizes[preset].size);
 #else
                         nuPiReadRom((s32)icon_ROM_START + raster, entry->data, gHudElementSizes[preset].size);
@@ -455,6 +456,7 @@ void hud_element_load_script(HudElement* hudElement, HudScript* anim) {
 #endif
 #ifdef PORT
                         nuPiReadRom(resolve_rom_offset(icon_ROM_START + palette), entry->data, 32);
+                        port_hd_icon_loaded(entry->data, palette, 32);
 #else
                         nuPiReadRom((s32)icon_ROM_START + palette, entry->data, 32);
 #endif

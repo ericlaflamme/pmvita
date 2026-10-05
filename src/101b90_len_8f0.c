@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../port/endian.h"
+#include "../port/rom_offsets.h"
 #endif
 
 #ifdef SHIFT
@@ -337,6 +338,7 @@ SpriteAnimData* spr_load_sprite(s32 idx, s32 isPlayerSprite, s32 useTailAlloc) {
         }
 
         // Don't free animData (raw buffer) — inline data (cmd lists, palettes, images) point into it
+        port_hd_sprite_loaded(isPlayerSprite, idx, result);
         return result;
     }
 #else
@@ -486,6 +488,9 @@ IMG_PTR spr_get_player_raster(s32 rasterIndex, s32 playerSpriteID) {
     // upper three nibbles give size / 16, lower 5 give offset
     playerRasterInfo = PlayerRasterLoadDesc[PlayerRasterLoadDescBeginSpriteIndex[playerSpriteID] + rasterIndex];
     nuPiReadRom(SpriteDataHeader[0] + (playerRasterInfo & 0xFFFFF), cacheEntry->raster, (playerRasterInfo >> 0x10) & 0xFFF0);
+#ifdef PORT
+    port_hd_sprite_raster(true, playerSpriteID, rasterIndex, cacheEntry->raster, (playerRasterInfo >> 0x10) & 0xFFF0);
+#endif
     return cacheEntry->raster;
 }
 

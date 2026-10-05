@@ -308,6 +308,18 @@ typedef struct PartnerPosition {
     /* 0x04 */ s32 index;
 } PartnerPosition; // size = 0x8
 
+#ifdef PORT
+#include <stdio.h>
+#include "rom_offsets.h"
+
+static void port_hd_pause_portrait(s32 slot, s32 portraitIndex) {
+    char path[48];
+
+    snprintf(path, sizeof(path), "party/%s_img", gPausePartnersAssetNames[portraitIndex]);
+    port_hd_image_loaded(gPausePartnersImageBuffers[slot], 150 * 105, 150, path, gPausePartnersPaletteBuffers[slot], 256 * 2);
+}
+#endif
+
 void pause_partners_load_portrait(s32 index) {
     s32 size;
     void* asset;
@@ -317,6 +329,7 @@ void pause_partners_load_portrait(s32 index) {
         asset = load_asset_by_name(gPausePartnersAssetNames[gPausePartnersCurrentPortraitIndex], &size);
 #ifdef PORT
         decode_yay0_bounded(asset, gPausePartnersPaletteBuffers[0], PAUSE_PORTRAIT_BLOB_SIZE);
+        port_hd_pause_portrait(0, gPausePartnersCurrentPortraitIndex);
 #else
         decode_yay0(asset, gPausePartnersPaletteBuffers[0]);
 #endif
@@ -328,6 +341,7 @@ void pause_partners_load_portrait(s32 index) {
         asset = load_asset_by_name(gPausePartnersAssetNames[gPausePartnersNextPortraitIndex], &size);
 #ifdef PORT
         decode_yay0_bounded(asset, gPausePartnersPaletteBuffers[1], PAUSE_PORTRAIT_BLOB_SIZE);
+        port_hd_pause_portrait(1, gPausePartnersNextPortraitIndex);
 #else
         decode_yay0(asset, gPausePartnersPaletteBuffers[1]);
 #endif

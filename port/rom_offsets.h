@@ -27,6 +27,34 @@ extern "C" {
 u32 resolve_rom_offset(const void* stub_addr);
 
 /**
+ * Tell the HD texture provider which icon-segment raster/palette (by offset) now sits in dest.
+ */
+void port_hd_icon_loaded(const void* dest, u32 iconOffset, u32 size);
+
+/**
+ * Map texture archives: the HD pack names them alt/textures/<archive>/<texture name>[_mm1|_aux].
+ * begin() forgets every map texture at or above heapStart, end() frees unused HD copies and preloads new ones.
+ */
+void port_hd_note_asset_offset(const char* assetName, u32 romOffset);
+void port_hd_map_textures_begin(u32 romOffset, const void* heapStart);
+void port_hd_map_texture_loaded(const char* name, const char* suffix, const void* raster, u32 size);
+void port_hd_map_textures_end(void);
+
+/**
+ * Sprites: the pack names them alt/sprites/{npc_sprite_%03d|player_sprite_%d}_raster_<n>[@<owner>_pal_<p>].
+ * loaded() is called with each freshly built SpriteAnimData, raster() whenever a player raster lands in memory.
+ */
+void port_hd_sprite_loaded(s32 isPlayer, s32 sprite, const void* spriteAnimData);
+void port_hd_sprite_raster(s32 isPlayer, s32 sprite, s32 raster, const void* img, u32 size);
+void port_hd_frame(void);
+
+/**
+ * A large image (size bytes, rowBytes per row) the game draws in strips; HD file is alt/<path>.
+ * CI images pass the palette the pack colored them with; the HD copy is only used while it's active.
+ */
+void port_hd_image_loaded(const void* base, u32 size, u32 rowBytes, const char* path, const void* pal, u32 palBytes);
+
+/**
  * Byte-swap macros for big-endian ROM data on little-endian PC.
  * N64 ROM data is big-endian. On PC (little-endian), multi-byte fields
  * read from ROM must be byte-swapped.

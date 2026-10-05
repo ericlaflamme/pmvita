@@ -1,5 +1,8 @@
 #include "common.h"
 #include "npc.h"
+#ifdef PORT
+#include "rom_offsets.h"
+#endif
 
 #ifndef PARTY_IMAGE
 #error "Define PARTY_IMAGE to the asset name to use LoadPartyImage."
@@ -39,6 +42,8 @@ API_CALLABLE(N(LoadPartyImage)) {
 
     #if defined(PORT)
     decode_yay0_bounded(compressed, &img, sizeof(img));
+    port_hd_image_loaded(img.raster, sizeof(img.raster), PARTY_IMAGE_WIDTH, "party/" PARTY_IMAGE "_img", img.palette,
+                         sizeof(img.palette));
     #elif defined(SHIFT)
     decode_yay0(compressed, &img);
     #else

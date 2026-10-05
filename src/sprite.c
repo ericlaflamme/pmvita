@@ -2,6 +2,7 @@
 #include "sprite/player.h"
 #ifdef PORT
 #include <stdio.h>
+#include "../port/rom_offsets.h"
 #endif
 
 #define MAX_SPRITE_ID 0xEA // todo generate this
@@ -879,6 +880,9 @@ void spr_init_sprites(s32 playerSpriteSet) {
 }
 
 void spr_render_init(void) {
+#ifdef PORT
+    port_hd_frame();
+#endif
     spr_update_player_raster_cache();
     spr_clear_quad_cache();
 }

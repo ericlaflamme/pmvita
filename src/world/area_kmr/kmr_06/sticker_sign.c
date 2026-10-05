@@ -112,6 +112,8 @@ API_CALLABLE(N(CreateSticker)) {
         icon_ROM_START + gItemIconPaletteOffsets[itemID],
         icon_ROM_START + gItemIconPaletteOffsets[itemID] + 0x20,
         iconPal);
+    port_hd_icon_loaded(iconImg, gItemIconRasterOffsets[itemID], 0x200);
+    port_hd_icon_loaded(iconPal, gItemIconPaletteOffsets[itemID], 0x20);
 #else
     dma_copy(
         (u8*) (iconBase + gItemIconRasterOffsets[itemID]),

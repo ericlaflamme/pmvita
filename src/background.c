@@ -3,6 +3,7 @@
 #include "gcc/string.h"
 #ifdef PORT
 #include "../port/endian.h"
+#include "rom_offsets.h"
 #include <stdio.h>
 extern void gfx_texture_cache_clear(void);
 extern float GameEngine_GetAspectRatio(void);
@@ -102,6 +103,13 @@ void load_map_bg(char* optAssetName) {
             gBackgroundImage.startY  = read_be_u16(buf + 10);
             gBackgroundImage.width   = read_be_u16(buf + 12);
             gBackgroundImage.height  = read_be_u16(buf + 14);
+
+            {
+                char hdPath[48];
+                snprintf(hdPath, sizeof(hdPath), "backgrounds/%s", assetName);
+                port_hd_image_loaded(gBackgroundImage.raster, gBackgroundImage.width * gBackgroundImage.height,
+                                     gBackgroundImage.width, hdPath, gBackgroundImage.palette, 256 * 2);
+            }
 
             /* Invalidate Fast3D texture cache — the background buffer is reused
              * at the same addresses, so stale cache entries from the previous

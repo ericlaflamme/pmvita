@@ -9,6 +9,7 @@
 #ifdef PORT
 #include <stdio.h>
 #include "../port/endian.h"
+#include "rom_offsets.h"
 extern void gfx_texture_cache_clear(void);
 #endif
 
@@ -205,6 +206,12 @@ void state_init_title_screen(void) {
         TitleScreen_ImgList_Logo = (s32*)(base + logoOff);
         TitleScreen_ImgList_Copyright = (u8 (*)[COPYRIGHT_WIDTH])(base + copyrightOff);
         TitleScreen_ImgList_PressStart = (s32*)(base + pressStartOff);
+        port_hd_image_loaded(TitleScreen_ImgList_Logo, TITLE_WIDTH * TITLE_HEIGHT * 4, TITLE_WIDTH * 4,
+                             "title_screen/title_logo_img", nullptr, 0);
+        port_hd_image_loaded(TitleScreen_ImgList_Copyright, COPYRIGHT_WIDTH * 32, COPYRIGHT_WIDTH,
+                             "title_screen/title_copyright_img", nullptr, 0);
+        port_hd_image_loaded(TitleScreen_ImgList_PressStart, 128 * 32, 128, "title_screen/title_press_start_img",
+                             nullptr, 0);
         fprintf(stderr, "[title_screen] PORT: logo=+0x%X copyright=+0x%X pressStart=+0x%X\n",
                 logoOff, copyrightOff, pressStartOff);
         fflush(stderr);

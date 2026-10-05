@@ -2159,6 +2159,27 @@ void load_texture_impl(u32 romOffset, TextureHandle* handle, TextureHeader* head
         handle->auxRaster = nullptr;
     }
 
+#ifdef PORT
+    // Half-height split tiles share one load between two TMEM offsets, which an HD stand-in can't follow.
+    if (header->extraTiles != EXTRA_TILE_AUX_SAME_AS_MAIN) {
+        const char* name = (const char*) header->name;
+        s32 bits = 4 << header->mainBitDepth;
+        s32 lod0Size = header->mainW * header->mainH * bits / 8;
+
+        if (header->extraTiles == EXTRA_TILE_MIPMAPS) {
+            port_hd_map_texture_loaded(name, "", handle->raster, lod0Size);
+            if (header->mainW / 2 * bits >= 64 && header->mainH / 2 != 0) {
+                port_hd_map_texture_loaded(name, "_mm1", handle->raster + lod0Size, lod0Size / 4);
+            }
+        } else {
+            port_hd_map_texture_loaded(name, "", handle->raster, mainSize);
+        }
+        if (handle->auxRaster != nullptr) {
+            port_hd_map_texture_loaded(name, "_aux", handle->auxRaster, auxSize);
+        }
+    }
+#endif
+
     // copy header data and create a display list for the texture
     handle->gfx = (Gfx*) TextureHeapPos;
     memcpy(&handle->header, header, sizeof(*header));
@@ -2487,6 +2508,7 @@ void mdl_load_all_textures(ModelNode* rootModel, s32 romOffset, s32 size) {
         // The texture heap is reused across maps, so stale GPU textures
         // keyed by old heap addresses must be evicted.
         gfx_texture_cache_clear();
+        port_hd_map_textures_begin(romOffset, TextureHeapPos);
 
         for (i = 0; i < ARRAY_COUNT(TextureHandles); i++) {
             TextureHandles[i].gfx = nullptr;
@@ -2496,6 +2518,7 @@ void mdl_load_all_textures(ModelNode* rootModel, s32 romOffset, s32 size) {
         if (rootModel != nullptr) {
             load_next_model_textures(rootModel, romOffset, size);
         }
+        port_hd_map_textures_end();
     }
 }
 

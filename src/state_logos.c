@@ -97,6 +97,11 @@ void state_init_logos(void) {
     gLogosImage1 = gLogosImages + 0x0;
     gLogosImage3 = gLogosImages + 0x7000;
     gLogosImage2 = gLogosImages + 0x15000;
+#ifdef PORT
+    port_hd_image_loaded(gLogosImage1, 128 * 112 * 2, 128 * 2, "logos/LOGO_1", nullptr, 0);
+    port_hd_image_loaded(gLogosImage2, 256 * 48 * 2, 256 * 2, "logos/LOGO_2", nullptr, 0);
+    port_hd_image_loaded(gLogosImage3, 256 * 112 * 2, 256 * 2, "logos/LOGO_3", nullptr, 0);
+#endif
 
     nuContRmbForceStop();
     create_cameras();

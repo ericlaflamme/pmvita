@@ -87,6 +87,8 @@ uint64_t port_time_us(void);
 
 namespace Fast {
 
+RawTexReplacementLookup gRawTexReplacementLookup = nullptr;
+
 // PORT: phase times of the last shader created, set by the GL backend.
 extern double gPortShaderMsVs;
 extern double gPortShaderMsFs;
@@ -1182,6 +1184,16 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
         case G_IM_SIZ_32b:
             resultOrigLineSize *= 2;
             break;
+        default: {
+            // TMEM pads rows to 8 bytes; LoadTile recorded the real (scaled) row, same as the UV setup.
+            uint32_t loadedLine = (uint32_t)(mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes /
+                                                 metadata->h_byte_scale +
+                                             0.5f);
+            if (loadedLine != 0 && loadedLine < numOriginallyLoadedBytes && loadedLine < resultOrigLineSize) {
+                resultOrigLineSize = loadedLine;
+            }
+            break;
+        }
     }
     if (resultOrigLineSize == 0) return;
     uint32_t resultOrigHeight = numOriginallyLoadedBytes / resultOrigLineSize;
@@ -1199,7 +1211,8 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     uint32_t line_size_bytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
 
     // Get the resource's true image size
-    uint32_t resourceImageSizeBytes = resource->ImageDataSize;
+    uint32_t resourceImageSizeBytes =
+        resource != nullptr ? resource->ImageDataSize : (uint32_t)width * height * 4;
     uint32_t safeFullImageLineSizeBytes = fullImageLineSizeBytes;
     uint32_t safeLineSizeBytes = line_size_bytes;
     uint32_t safeLoadedBytes = numLoadedBytes;
@@ -2141,7 +2154,12 @@ void Interpreter::GfxSpTri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx
             // RGBA32 is excluded because its dual-bank TMEM addressing means
             // texture_tile.line_size_bytes is already the correct 2-bpp bank value.
             if (mRdp->texture_tile[tile].siz != G_IM_SIZ_32b) {
-                uint32_t loaded_line = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].line_size_bytes;
+                const auto& loaded = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index];
+                uint32_t loaded_line = loaded.line_size_bytes;
+                // HD replacements store the scaled row; compare in original texture bytes.
+                if (loaded.raw_tex_metadata.h_byte_scale != 1) {
+                    loaded_line = (uint32_t)(loaded_line / loaded.raw_tex_metadata.h_byte_scale + 0.5f);
+                }
                 if (loaded_line != 0 && loaded_line < tex_size_bytes && loaded_line < line_size) {
                     line_size = loaded_line;
                 }
@@ -2636,6 +2654,19 @@ void Interpreter::GfxDpSetTextureImage(uint32_t format, uint32_t size, uint32_t 
                                        uint32_t texFlags, RawTexMetadata rawTexMetdata, const void* addr) {
     // fprintf(stderr, "GfxDpSetTextureImage: %s (width=%d; size=0x%X)\n",
     //         rawTexMetdata.resource ? rawTexMetdata.resource->GetInitData()->Path.c_str() : nullptr, width, size);
+    if (gRawTexReplacementLookup != nullptr && addr != nullptr && rawTexMetdata.resource == nullptr &&
+        texFlags == 0) {
+        RawTexReplacement rep;
+        if (gRawTexReplacementLookup(addr, format, mRdp->palettes[0], &rep)) {
+            addr = rep.data;
+            texFlags = TEX_FLAG_LOAD_AS_RAW;
+            rawTexMetdata.width = rep.width;
+            rawTexMetdata.height = rep.height;
+            rawTexMetdata.h_byte_scale = rep.h_byte_scale;
+            rawTexMetdata.v_pixel_scale = rep.v_pixel_scale;
+            rawTexMetdata.type = TextureType::RGBA32bpp;
+        }
+    }
     mRdp->texture_to_load.addr = (const uint8_t*)addr;
     mRdp->texture_to_load.siz = size;
     mRdp->texture_to_load.width = width;

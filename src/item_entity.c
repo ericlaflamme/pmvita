@@ -330,6 +330,7 @@ void item_entity_load(ItemEntity* item) {
                         ASSERT(*gHudElementCacheSize + size < 0x11000);
 #ifdef PORT
                         nuPiReadRom(resolve_rom_offset(icon_ROM_START + raster), entry->data, size);
+                        port_hd_icon_loaded(entry->data, raster, size);
 #else
                         nuPiReadRom((s32)icon_ROM_START + raster, entry->data, size);
 #endif
@@ -367,6 +368,7 @@ void item_entity_load(ItemEntity* item) {
                         ASSERT(*gHudElementCacheSize + 0x20 < 0x11000);
 #ifdef PORT
                         nuPiReadRom(resolve_rom_offset(icon_ROM_START + palette), entry->data, 0x20);
+                        port_hd_icon_loaded(entry->data, palette, 0x20);
 #else
                         nuPiReadRom((s32)icon_ROM_START + palette, entry->data, 0x20);
 #endif

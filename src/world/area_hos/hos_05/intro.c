@@ -4,6 +4,9 @@
 #include "nu/nusys.h"
 #include "ld_addrs.h"
 #ifdef PORT
+#include "rom_offsets.h"
+#endif
+#ifdef PORT
 #endif
 
 enum {
@@ -1538,6 +1541,19 @@ void N(load_story_image)(s32 loadBackImage, s32 imageIdx) {
             N(StoryGraphicsPtr)->imgBack
         );
     }
+#ifdef PORT
+    {
+        static const char* sStoryPages[] = {
+            "story_images/story_page_starry_sky_img", "story_images/story_page_shrine_ext_img",
+            "story_images/story_page_star_rod_img", "story_images/story_page_shrine_int_img",
+        };
+        u8* img = loadBackImage ? N(StoryGraphicsPtr)->imgBack : N(StoryGraphicsPtr)->imgFront;
+
+        if (imageIdx < ARRAY_COUNT(sStoryPages)) {
+            port_hd_image_loaded(img, STORY_IMG_SIZE, 264, sStoryPages[imageIdx], img + STORY_IMG_SIZE, PAL_256_SIZE);
+        }
+    }
+#endif
 }
 
 API_CALLABLE(N(InitializeStoryGraphicsData)) {
@@ -1582,6 +1598,11 @@ API_CALLABLE(N(InitializeStoryGraphicsData)) {
     dmaEnd = title_bg_1_ROM_START + tapeOffset + TAPE_IMG_SIZE;
 
     dma_copy(dmaStart, dmaEnd + (BOWSER_IMG_SIZE + PAL_256_SIZE), N(StoryGraphicsPtr)->imgTape);
+#ifdef PORT
+    port_hd_image_loaded(N(StoryGraphicsPtr)->imgTape, TAPE_IMG_SIZE, 128, "story_images/story_tape_img", nullptr, 0);
+    port_hd_image_loaded(N(StoryGraphicsPtr)->imgBowser, BOWSER_IMG_SIZE, 128,
+                         "story_images/story_bowser_silhouette_img", N(StoryGraphicsPtr)->palBowser, PAL_256_SIZE);
+#endif
     N(StoryGraphicsPtr)->flipOrder = 0;
     N(StoryGraphicsPtr)->storyPageAlpha = 255;
     N(StoryGraphicsPtr)->tapeAlpha = 0;

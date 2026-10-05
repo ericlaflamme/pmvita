@@ -219,6 +219,15 @@ struct RawTexMetadata {
     Fast::TextureType type;
 };
 
+// PORT: RGBA32 stand-in for a texture the game loaded from ROM, looked up by address + active TLUT.
+struct RawTexReplacement {
+    const uint8_t* data;
+    uint16_t width, height;
+    float h_byte_scale, v_pixel_scale;
+};
+typedef bool (*RawTexReplacementLookup)(const void* addr, uint32_t fmt, const void* tlut, RawTexReplacement* out);
+extern RawTexReplacementLookup gRawTexReplacementLookup;
+
 struct ShaderMod {
     bool enabled = false;
     int16_t id;

@@ -60,6 +60,8 @@ typedef struct {
 GameEngine* GameEngine::Instance;
 AudioState GameEngine::audio;
 
+void PortHdTextures_Init();
+
 // Stub for frame interpolation — Paper Mario interpolation not yet implemented.
 // Returns an empty matrix replacement map (no interpolation applied).
 static std::unordered_map<Mtx*, MtxF> FrameInterpolation_Interpolate(float /*step*/) {
@@ -301,6 +303,7 @@ void GameEngine::FinishInit() {
 
     prevAltAssets = CVarGetInteger("gEnhancements.Mods.AlternateAssets", 1);
     context->GetResourceManager()->SetAltAssetsEnabled(prevAltAssets);
+    PortHdTextures_Init();
 
     fprintf(stderr, "[PaperShip] FinishInit: done\n");
     // TODO: PaperShipGui::SetupGuiElements();
