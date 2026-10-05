@@ -46,6 +46,7 @@ void port_hd_map_textures_end(void);
  */
 void port_hd_sprite_loaded(s32 isPlayer, s32 sprite, const void* spriteAnimData);
 void port_hd_sprite_raster(s32 isPlayer, s32 sprite, s32 raster, const void* img, u32 size);
+void port_hd_sprite_draw(const void* img, s32 anim);
 void port_hd_frame(void);
 
 /**

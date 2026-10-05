@@ -232,7 +232,6 @@ struct SpriteInfo {
     std::vector<std::array<uint8_t, kTlutBytes>> palettes;
     std::vector<int8_t> defaultPal;                   // per raster
     std::vector<std::vector<uint16_t>> anims;         // rasters each animation shows
-    std::vector<std::vector<uint16_t>> animsOfRaster; // animations showing each raster
 };
 // Mirrors of the PORT-built SpriteAnimData (src/101b90_len_8f0.c).
 struct GameRaster {
@@ -255,6 +254,7 @@ std::unordered_map<uint32_t, SpriteInfo> sSprites; // owner -> info
 std::unordered_map<const void*, uint32_t> sSpritePalByAddr;
 std::unordered_map<uint64_t, SpriteSlot> sSpriteCache; // (raster key << 32) | palette key
 std::unordered_map<uint64_t, bool> sAnimHasHd;        // ((owner | anim) << 32) | override palette key
+std::unordered_map<const void*, int16_t> sDrawAnim;  // raster image -> animation it was last drawn in
 size_t sSpriteBytes = 0;
 uint32_t sFrame = 0;
 
@@ -263,6 +263,7 @@ struct HdRegion {
     uint32_t size, rowBytes, hash;
     std::string path;
     std::vector<uint8_t> pal; // CI only: the palette the pack's image was colored with
+    bool hashed = true;       // static buffers are filled after init; hash them on first use
 };
 struct RegionSlot {
     HdEntry hd;
@@ -600,22 +601,26 @@ std::string SpritePath(uint32_t rasterKey, uint32_t palKey) {
     const uint32_t owner = rasterKey & 0xFFFF0000u;
     const uint32_t raster = rasterKey & 0xFFFF;
     auto sit = sSprites.find(owner);
-    if (sit == sSprites.end()) {
-        return SpriteHdPath(owner, raster, palKey, 0);
+    return SpriteHdPath(owner, raster, palKey, sit != sSprites.end() ? DefaultPal(sit->second, raster) : 0);
+}
+
+// The pack only has the frames its dumper saw; an animation missing some would flicker HD/SD, so keep it SD.
+bool AnimFitsHd(uint32_t rasterKey, uint32_t palKey, const void* img) {
+    const uint32_t owner = rasterKey & 0xFFFF0000u;
+    auto sit = sSprites.find(owner);
+    auto ait = sDrawAnim.find(img);
+    if (sit == sSprites.end() || ait == sDrawAnim.end()) {
+        return true;
     }
     const SpriteInfo& info = sit->second;
-    const int def = DefaultPal(info, raster);
-    // A raster on its own non-zero palette ignores the animation's color variant; assume the plain one.
-    const uint32_t overridePal = (def != 0 && palKey == (owner | def)) ? owner : palKey;
     const SpriteInfo* animInfo = AnimSource(owner, info);
-    if (overridePal != owner && raster < animInfo->animsOfRaster.size()) {
-        for (uint16_t a : animInfo->animsOfRaster[raster]) {
-            if (!AnimHasHd(owner, info, a, animInfo->anims[a], overridePal)) {
-                return "";
-            }
-        }
+    if (ait->second < 0 || (size_t)ait->second >= animInfo->anims.size()) {
+        return true;
     }
-    return SpriteHdPath(owner, raster, palKey, def);
+    // A raster on its own non-zero palette ignores the animation's color variant; assume the plain one.
+    const int def = DefaultPal(info, rasterKey & 0xFFFF);
+    const uint32_t overridePal = (def != 0 && palKey == (owner | def)) ? owner : palKey;
+    return AnimHasHd(owner, info, ait->second, animInfo->anims[ait->second], overridePal);
 }
 
 // Only drop sprites unused for a couple of frames: the interpreter may still read this frame's data.
@@ -667,7 +672,7 @@ bool FetchSprite(uint32_t rasterKey, uint32_t palKey, Fast::RawTexReplacement* o
     return true;
 }
 
-bool LookupSprite(const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplacement* out) {
+bool LookupSprite(const void* addr, const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplacement* out) {
     // Lit maps draw each sprite through a second, per-frame palette that an RGBA stand-in can't carry.
     if (tlut == nullptr || (gSpriteShadingProfile != nullptr && (*gSpriteShadingProfile & 1))) {
         return false;
@@ -678,7 +683,8 @@ bool LookupSprite(const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplac
     if (own != sSprites.end()) {
         const auto& pals = own->second.palettes;
         for (uint32_t q = 0; q < pals.size(); q++) {
-            if (memcmp(tlut, pals[q].data(), kTlutBytes) == 0 && FetchSprite(r.key, owner | q, out)) {
+            if (memcmp(tlut, pals[q].data(), kTlutBytes) == 0 && AnimFitsHd(r.key, owner | q, addr) &&
+                FetchSprite(r.key, owner | q, out)) {
                 return true;
             }
         }
@@ -690,7 +696,7 @@ bool LookupSprite(const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplac
     auto fit = sSprites.find(pit->second & 0xFFFF0000u);
     const uint32_t q = pit->second & 0xFFFF;
     if (fit == sSprites.end() || q >= fit->second.palettes.size() ||
-        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0) {
+        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0 || !AnimFitsHd(r.key, pit->second, addr)) {
         return false;
     }
     return FetchSprite(r.key, pit->second, out);
@@ -707,7 +713,10 @@ bool LookupRegion(const uint8_t* addr, uint32_t fmt, const uint8_t* tlut, Fast::
     if (off >= r.size || off % r.rowBytes != 0) {
         return false;
     }
-    if (SampleHash(it->first, r.size) != r.hash) {
+    if (!r.hashed) {
+        it->second.hash = SampleHash(it->first, r.size);
+        it->second.hashed = true;
+    } else if (SampleHash(it->first, r.size) != r.hash) {
         sRegions.erase(it);
         return false;
     }
@@ -760,7 +769,7 @@ bool PortRawTexLookup(const void* addr, uint32_t fmt, const void* tlut, Fast::Ra
                 sSpriteRasters.erase(sit);
                 return false;
             }
-            return LookupSprite(sit->second, t, out);
+            return LookupSprite(addr, sit->second, t, out);
         }
     }
     if (!sRegions.empty() && LookupRegion(a, fmt, t, out)) {
@@ -825,7 +834,6 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
             sSpriteRasters[gr->image] = { owner | r, size, SampleHash(gr->image, size) };
         }
     }
-    info.animsOfRaster.resize(info.defaultPal.size());
 
     auto* const* anims = reinterpret_cast<GameAnimComp** const*>(sd + 1);
     for (uint32_t a = 0; anims[a] != end; a++) {
@@ -868,12 +876,13 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
         }
         std::sort(rasters.begin(), rasters.end());
         rasters.erase(std::unique(rasters.begin(), rasters.end()), rasters.end());
-        for (uint16_t r : rasters) {
-            if (r < info.animsOfRaster.size()) {
-                info.animsOfRaster[r].push_back(a);
-            }
-        }
         info.anims.push_back(std::move(rasters));
+    }
+}
+
+extern "C" void port_hd_sprite_draw(const void* img, int32_t anim) {
+    if (img != nullptr) {
+        sDrawAnim[img] = (int16_t)anim;
     }
 }
 
@@ -988,6 +997,23 @@ void PortHdTextures_Init() {
     }
     for (const HdIconPalette& p : kIconPalettes) {
         sIconPalettes[p.offset] = &p;
+    }
+    // Window corners are four IA8 corners stacked in one buffer, each loaded from its own offset.
+    const struct {
+        const unsigned char* img;
+        uint32_t width, height;
+        const char* path;
+    } kBoxCorners[] = {
+        { ui_box_corners1_png, 16, 64, "alt/ui/box/corners1" }, { ui_box_corners4_png, 8, 32, "alt/ui/box/corners4" },
+        { ui_box_corners5_png, 16, 32, "alt/ui/box/corners5" }, { ui_box_corners9_png, 16, 64, "alt/ui/box/corners9" },
+    };
+    for (const auto& c : kBoxCorners) {
+        HdRegion r;
+        r.size = c.width * c.height;
+        r.rowBytes = c.width;
+        r.path = c.path;
+        r.hashed = false;
+        sRegions[c.img] = std::move(r);
     }
     Fast::gRawTexReplacementLookup = PortRawTexLookup;
 }
