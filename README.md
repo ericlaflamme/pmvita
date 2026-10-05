@@ -90,7 +90,6 @@ Done so far:
 Still to do:
 - The intro's staged cutscene (Bowser, Kammy, and the Star Rod, between the curtains) still renders boxed at 4:3 inside the widescreen frame
 - Broader testing from Chapter 5 onward
-- General playthrough coverage
 
 ## Known Issues
 
