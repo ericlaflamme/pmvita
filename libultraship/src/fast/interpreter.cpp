@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <unordered_set>
 #include <assert.h>
 #include <stdio.h>
 
@@ -1258,6 +1259,25 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     uint32_t resultOrigHeight = numOriginallyLoadedBytes / resultOrigLineSize;
     uint32_t resultNewLineSize = resultOrigLineSize * metadata->h_byte_scale;
     uint32_t resultNewHeight = resultOrigHeight * metadata->v_pixel_scale;
+
+#ifdef __vita__
+    // PORT: diagnostic for HD stand-ins that render scrambled; one line per resource.
+    if (resource != nullptr) {
+        static std::unordered_set<const void*> sLogged;
+        if (sLogged.size() < 80 && sLogged.insert(resource.get()).second) {
+            const auto& t = mRdp->texture_tile[tile];
+            const auto& lt = mRdp->loaded_texture[t.tmem_index];
+            fprintf(stderr,
+                    "[hdimport] %s fmt=%d siz=%d pal=%d cms=%d cmt=%d tile=(%.0f,%.0f)-(%.0f,%.0f) line=%u "
+                    "ldline=%u ldsize=%u orig=%u full=%u | hd %ux%u scale=%.2f/%.2f -> %ux%u %s\n",
+                    resource->GetInitData()->Path.c_str(), t.fmt, t.siz, t.palette, t.cms, t.cmt,
+                    t.uls, t.ult, t.lrs, t.lrt, t.line_size_bytes, lt.line_size_bytes, lt.size_bytes,
+                    lt.orig_size_bytes, lt.full_image_line_size_bytes, width, height, metadata->h_byte_scale,
+                    metadata->v_pixel_scale, resultNewLineSize / 4, resultNewHeight,
+                    resultNewLineSize == 4 * width && resultNewHeight == height ? "direct" : "copied");
+        }
+    }
+#endif
 
     if (resultNewLineSize == 4 * width && resultNewHeight == height) {
         // Can use the texture directly since it has the correct dimensions

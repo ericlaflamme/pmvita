@@ -473,13 +473,31 @@ std::optional<CharsetRamp> LearnCharsetRamp(const HdCharset& cs, const std::stri
     return ramp;
 }
 
+bool IsGrayscale(const HdEntry& e) {
+    for (size_t i = 0; i < e.data.size(); i += 4) {
+        const uint8_t* p = &e.data[i];
+        if (p[3] >= 128 && (std::abs(p[0] - p[1]) > 24 || std::abs(p[1] - p[2]) > 24)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool RecolorGlyph(const HdCharset& cs, uint32_t glyph, uint32_t pal, HdEntry& e) {
+    if (!LoadHd(cs.prefix + std::to_string(glyph), e)) {
+        return false;
+    }
+    // Icon glyphs (C buttons, stars...) keep their own colors whatever the text palette: use them as baked.
+    if (!IsGrayscale(e)) {
+        return true;
+    }
     auto it = sCharsetRamps.find({ &cs, pal });
     if (it == sCharsetRamps.end()) {
         it = sCharsetRamps.emplace(std::make_pair(&cs, pal), LearnCharsetRamp(cs, cs.palPrefix + std::to_string(pal)))
                  .first;
     }
-    if (!it->second || !LoadHd(cs.prefix + std::to_string(glyph), e)) {
+    if (!it->second) {
+        e = HdEntry{};
         return false;
     }
     const CharsetRamp& ramp = *it->second;
@@ -519,7 +537,15 @@ bool LookupCharset(const HdCharset& cs, const uint8_t* addr, const uint8_t* tlut
             return path;
         },
         [&](const std::string& path, HdEntry& e) {
-            return LoadHd(path, e) || (pal != 0 && RecolorGlyph(cs, glyph, pal, e));
+            if (LoadHd(path, e) || (pal != 0 && RecolorGlyph(cs, glyph, pal, e))) {
+                return true;
+            }
+            static int sLogged = 0;
+            if (sLogged < 40) {
+                sLogged++;
+                fprintf(stderr, "[HD] glyph %u palette %u stays SD (%s)\n", glyph, pal, path.c_str());
+            }
+            return false;
         },
         out);
 }
