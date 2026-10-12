@@ -208,17 +208,6 @@ struct IconBuf {
 std::unordered_map<const void*, IconBuf> sIconBufs;
 uint32_t sLoaded = 0;
 
-// Map textures live in the texture heap until the next map/battle reloads that part of it.
-struct MapTex {
-    std::string path;
-    uint32_t size, hash;
-};
-std::unordered_map<const void*, MapTex> sMapTexByAddr;
-std::unordered_map<std::string, HdEntry> sMapTexCache;
-std::unordered_map<uint32_t, std::string> sTexArchives; // ROM offset -> "kmr_tex"
-std::string sCurArchive;
-uint32_t sMapTexMissing = 0;
-
 // Sprites are keyed as (isPlayer << 31 | sprite << 16 | raster or palette index).
 constexpr uint32_t kPlayerBit = 1u << 31;
 struct SpriteInfo {
@@ -307,6 +296,55 @@ uint32_t SampleHash(const void* p, uint32_t size) {
     return h;
 }
 
+// VPixelScale is the exact HD/original pixel ratio; shrink to kTargetScale. Packs use odd ratios
+// (13x, 5x...), so resample by kTargetScale/VPixelScale when that lands on whole pixels, else by
+// the largest whole divisor. A fractional ratio would misplace rows. num == den: nothing to do.
+void ShrinkRgba(const uint8_t* src, uint32_t srcW, uint32_t srcH, float vScale, std::vector<uint8_t>& out,
+                uint32_t& num, uint32_t& den) {
+    const uint32_t vp = (uint32_t)vScale;
+    num = 1;
+    den = 1;
+    if (vp > kTargetScale && (float)vp == vScale && srcW * kTargetScale % vp == 0 &&
+        srcH * kTargetScale % vp == 0) {
+        num = kTargetScale;
+        den = vp;
+    } else {
+        den = std::max(1u, (uint32_t)(vScale / kTargetScale));
+        while (den > 1 && (srcW % den != 0 || srcH % den != 0)) {
+            den--;
+        }
+    }
+    if (num == den) {
+        return;
+    }
+
+    const uint32_t dstW = srcW * num / den;
+    const uint32_t dstH = srcH * num / den;
+    out.resize(dstW * dstH * 4);
+    for (uint32_t y = 0; y < dstH; y++) {
+        const uint32_t sy0 = y * srcH / dstH, sy1 = (y + 1) * srcH / dstH;
+        for (uint32_t x = 0; x < dstW; x++) {
+            const uint32_t sx0 = x * srcW / dstW, sx1 = (x + 1) * srcW / dstW;
+            // Alpha-weighted box filter so transparent texels don't darken the glyph outline.
+            uint32_t r = 0, g = 0, b = 0, a = 0;
+            for (uint32_t sy = sy0; sy < sy1; sy++) {
+                const uint8_t* s = src + (sy * srcW + sx0) * 4;
+                for (uint32_t sx = sx0; sx < sx1; sx++, s += 4) {
+                    r += s[0] * s[3];
+                    g += s[1] * s[3];
+                    b += s[2] * s[3];
+                    a += s[3];
+                }
+            }
+            uint8_t* d = &out[(y * dstW + x) * 4];
+            d[0] = a ? r / a : 0;
+            d[1] = a ? g / a : 0;
+            d[2] = a ? b / a : 0;
+            d[3] = a / ((sx1 - sx0) * (sy1 - sy0));
+        }
+    }
+}
+
 bool LoadHd(const std::string& path, HdEntry& e) {
     auto rm = Ship::Context::GetInstance()->GetResourceManager();
     if (!rm->GetArchiveManager()->HasFile(path)) {
@@ -323,51 +361,13 @@ bool LoadHd(const std::string& path, HdEntry& e) {
         return false;
     }
 
-    // VPixelScale is the exact HD/original pixel ratio; shrink to kTargetScale. Packs use odd ratios
-    // (13x, 6x...), so resample by kTargetScale/VPixelScale when that lands on whole pixels, else by
-    // the largest whole divisor.
-    const uint32_t srcW = tex->Width;
-    const uint32_t srcH = tex->Height;
-    const uint32_t vp = (uint32_t)tex->VPixelScale;
-    uint32_t num = 1, den = 1;
-    if (vp > kTargetScale && (float)vp == tex->VPixelScale && srcW * kTargetScale % vp == 0 &&
-        srcH * kTargetScale % vp == 0) {
-        num = kTargetScale;
-        den = vp;
-    } else {
-        den = std::max(1u, (uint32_t)(tex->VPixelScale / kTargetScale));
-        while (den > 1 && (srcW % den != 0 || srcH % den != 0)) {
-            den--;
-        }
+    uint32_t num, den;
+    ShrinkRgba(tex->ImageData, tex->Width, tex->Height, tex->VPixelScale, e.data, num, den);
+    if (num == den) {
+        e.data.assign(tex->ImageData, tex->ImageData + (size_t)tex->Width * tex->Height * 4);
     }
-
-    const uint32_t dstW = srcW * num / den;
-    const uint32_t dstH = srcH * num / den;
-    e.data.resize(dstW * dstH * 4);
-    for (uint32_t y = 0; y < dstH; y++) {
-        const uint32_t sy0 = y * srcH / dstH, sy1 = (y + 1) * srcH / dstH;
-        for (uint32_t x = 0; x < dstW; x++) {
-            const uint32_t sx0 = x * srcW / dstW, sx1 = (x + 1) * srcW / dstW;
-            // Alpha-weighted box filter so transparent texels don't darken the glyph outline.
-            uint32_t r = 0, g = 0, b = 0, a = 0;
-            for (uint32_t sy = sy0; sy < sy1; sy++) {
-                const uint8_t* s = tex->ImageData + (sy * srcW + sx0) * 4;
-                for (uint32_t sx = sx0; sx < sx1; sx++, s += 4) {
-                    r += s[0] * s[3];
-                    g += s[1] * s[3];
-                    b += s[2] * s[3];
-                    a += s[3];
-                }
-            }
-            uint8_t* d = &e.data[(y * dstW + x) * 4];
-            d[0] = a ? r / a : 0;
-            d[1] = a ? g / a : 0;
-            d[2] = a ? b / a : 0;
-            d[3] = a / ((sx1 - sx0) * (sy1 - sy0));
-        }
-    }
-    e.width = dstW;
-    e.height = dstH;
+    e.width = tex->Width * num / den;
+    e.height = tex->Height * num / den;
     e.hByteScale = tex->HByteScale * num / den;
     e.vPixelScale = tex->VPixelScale * num / den;
     e.valid = true;
@@ -599,10 +599,6 @@ bool LookupUi(const void* addr, const char* path, uint32_t fmt, const void* tlut
         out);
 }
 
-bool LookupMapTex(const MapTex& m, Fast::RawTexReplacement* out) {
-    return Fetch(sMapTexCache, m.path, [&] { return m.path; }, out);
-}
-
 bool LookupEntity(const void* addr, const char* path, uint32_t fmt, const void* tlut, Fast::RawTexReplacement* out) {
     if (fmt != G_IM_FMT_CI) {
         return Fetch(sCache, HdKey{ addr, nullptr }, [&] { return std::string("alt/") + path; }, out);
@@ -826,14 +822,6 @@ bool PortRawTexLookup(const void* addr, uint32_t fmt, const void* tlut, Fast::Ra
     }
     const uint8_t* a = static_cast<const uint8_t*>(addr);
     const uint8_t* t = static_cast<const uint8_t*>(tlut);
-    auto mit = sMapTexByAddr.find(addr);
-    if (mit != sMapTexByAddr.end()) {
-        if (SampleHash(addr, mit->second.size) != mit->second.hash) {
-            sMapTexByAddr.erase(mit);
-            return false;
-        }
-        return LookupMapTex(mit->second, out);
-    }
     if (!sRegions.empty() && LookupRegion(a, fmt, t, out)) {
         return true;
     }
@@ -865,13 +853,6 @@ bool PortRawTexLookup(const void* addr, uint32_t fmt, const void* tlut, Fast::Ra
 extern "C" void port_hd_icon_loaded(const void* dest, uint32_t iconOffset, uint32_t size) {
     if (dest != nullptr && size > 0) {
         sIconBufs[dest] = { iconOffset, size, Fnv1a(dest, size) };
-    }
-}
-
-extern "C" void port_hd_note_asset_offset(const char* assetName, uint32_t romOffset) {
-    size_t len = strlen(assetName);
-    if (len > 4 && strcmp(assetName + len - 4, "_tex") == 0) {
-        sTexArchives[romOffset] = assetName;
     }
 }
 
@@ -946,6 +927,28 @@ extern "C" void port_hd_sprite_draw(const void* img, const void* cmdList) {
     }
 }
 
+void PortHdShrinkTexture(Fast::Texture* tex) {
+    if (tex->Type != Fast::TextureType::RGBA32bpp || tex->ImageData == nullptr ||
+        tex->ImageDataSize < (uint32_t)tex->Width * tex->Height * 4) {
+        return;
+    }
+    std::vector<uint8_t> out;
+    uint32_t num, den;
+    ShrinkRgba(tex->ImageData, tex->Width, tex->Height, tex->VPixelScale, out, num, den);
+    if (num == den) {
+        return;
+    }
+    uint8_t* data = new uint8_t[out.size()];
+    memcpy(data, out.data(), out.size());
+    delete[] tex->ImageData;
+    tex->ImageData = data;
+    tex->ImageDataSize = out.size();
+    tex->Width = tex->Width * num / den;
+    tex->Height = tex->Height * num / den;
+    tex->HByteScale = tex->HByteScale * num / den;
+    tex->VPixelScale = tex->VPixelScale * num / den;
+}
+
 std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
                                 const uint8_t** coverageTlut) {
     unsigned sprite, raster;
@@ -1001,63 +1004,6 @@ extern "C" void port_hd_image_loaded(const void* base, uint32_t size, uint32_t r
         fprintf(stderr, "[HD] image registered: %s (%u bytes, %u per row)\n", r.path.c_str(), size, rowBytes);
     }
     sRegions[static_cast<const uint8_t*>(base)] = std::move(r);
-}
-
-extern "C" void port_hd_map_textures_begin(uint32_t romOffset, const void* heapStart) {
-    auto it = sTexArchives.find(romOffset);
-    sCurArchive = it != sTexArchives.end() ? it->second : std::string();
-    sMapTexMissing = 0;
-    for (auto m = sMapTexByAddr.begin(); m != sMapTexByAddr.end();) {
-        m = (uintptr_t)m->first >= (uintptr_t)heapStart ? sMapTexByAddr.erase(m) : std::next(m);
-    }
-}
-
-extern "C" void port_hd_map_texture_loaded(const char* name, const char* suffix, const void* raster, uint32_t size) {
-    if (sCurArchive.empty() || raster == nullptr || size == 0) {
-        return;
-    }
-    std::string path = "alt/textures/" + sCurArchive + "/" + std::string(name, strnlen(name, 32)) + suffix;
-    if (!Ship::Context::GetInstance()->GetResourceManager()->GetArchiveManager()->HasFile(path)) {
-        if (sMapTexMissing++ < 8) {
-            fprintf(stderr, "[HD] no map texture %s\n", path.c_str());
-        }
-        return;
-    }
-    sMapTexByAddr[raster] = { std::move(path), size, SampleHash(raster, size) };
-}
-
-extern "C" void port_hd_map_textures_end() {
-    auto rm = Ship::Context::GetInstance()->GetResourceManager();
-    std::unordered_set<std::string> used;
-    for (const auto& m : sMapTexByAddr) {
-        used.insert(m.second.path);
-    }
-    size_t freed = 0;
-    for (auto it = sMapTexCache.begin(); it != sMapTexCache.end();) {
-        if (used.count(it->first) == 0) {
-            freed++;
-            it = sMapTexCache.erase(it);
-        } else {
-            ++it;
-        }
-    }
-
-    // Decode now, while the screen is faded out, instead of hitching on first draw.
-    size_t loaded = 0, bytes = 0;
-    if (rm->IsAltAssetsEnabled()) {
-        Fast::RawTexReplacement rep;
-        for (const std::string& u : used) {
-            bool fresh = sMapTexCache.count(u) == 0;
-            if (Fetch(sMapTexCache, u, [&] { return u; }, &rep) && fresh) {
-                loaded++;
-            }
-        }
-    }
-    for (const auto& c : sMapTexCache) {
-        bytes += c.second.data.size();
-    }
-    fprintf(stderr, "[HD] map textures %s: %zu in use, %zu loaded, %zu freed, %zu KB, %u missing\n",
-            sCurArchive.c_str(), used.size(), loaded, freed, bytes / 1024, sMapTexMissing);
 }
 
 void PortHdTextures_Init() {

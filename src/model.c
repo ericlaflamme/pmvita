@@ -2140,9 +2140,6 @@ void load_texture_impl(u32 romOffset, TextureHandle* handle, TextureHeader* head
         handle->palette = nullptr;
     }
     dma_copy((u8*) romOffset, (u8*) (romOffset + mainSize + mainPalSize), TextureHeapPos);
-#ifdef PORT
-    Port_ModRegisterMapTexture(handle->raster, mainSize, (const char*)header->name, FALSE);
-#endif
     // PORT: Do NOT byte-swap raster or palette data here.
     // Fast3D expects texture data in N64 big-endian format and handles
     // the endianness conversion internally during texture upload.
@@ -2158,9 +2155,6 @@ void load_texture_impl(u32 romOffset, TextureHandle* handle, TextureHeader* head
             handle->auxPalette = nullptr;
         }
         dma_copy((u8*) romOffset, (u8*) (romOffset + auxSize + auxPalSize), TextureHeapPos);
-#ifdef PORT
-        Port_ModRegisterMapTexture(handle->auxRaster, auxSize, (const char*)header->name, TRUE);
-#endif
         // PORT: Same as main texture — don't byte-swap; Fast3D handles N64 format.
         TextureHeapPos += auxSize + auxPalSize;
     } else {
@@ -2176,15 +2170,15 @@ void load_texture_impl(u32 romOffset, TextureHandle* handle, TextureHeader* head
         s32 lod0Size = header->mainW * header->mainH * bits / 8;
 
         if (header->extraTiles == EXTRA_TILE_MIPMAPS) {
-            port_hd_map_texture_loaded(name, "", handle->raster, lod0Size);
+            Port_ModRegisterMapTexture(handle->raster, lod0Size, name, "");
             if (header->mainW / 2 * bits >= 64 && header->mainH / 2 != 0) {
-                port_hd_map_texture_loaded(name, "_mm1", handle->raster + lod0Size, lod0Size / 4);
+                Port_ModRegisterMapTexture(handle->raster + lod0Size, lod0Size / 4, name, "_mm1");
             }
         } else {
-            port_hd_map_texture_loaded(name, "", handle->raster, mainSize);
+            Port_ModRegisterMapTexture(handle->raster, mainSize, name, "");
         }
         if (handle->auxRaster != nullptr) {
-            port_hd_map_texture_loaded(name, "_aux", handle->auxRaster, auxSize);
+            Port_ModRegisterMapTexture(handle->auxRaster, auxSize, name, "_aux");
         }
     }
 #endif
@@ -2517,7 +2511,6 @@ void mdl_load_all_textures(ModelNode* rootModel, s32 romOffset, s32 size) {
         // The texture heap is reused across maps, so stale GPU textures
         // keyed by old heap addresses must be evicted.
         gfx_texture_cache_clear();
-        port_hd_map_textures_begin(romOffset, TextureHeapPos);
 
         for (i = 0; i < ARRAY_COUNT(TextureHandles); i++) {
             TextureHandles[i].gfx = nullptr;
@@ -2527,7 +2520,6 @@ void mdl_load_all_textures(ModelNode* rootModel, s32 romOffset, s32 size) {
         if (rootModel != nullptr) {
             load_next_model_textures(rootModel, romOffset, size);
         }
-        port_hd_map_textures_end();
     }
 }
 

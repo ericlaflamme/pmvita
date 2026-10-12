@@ -416,9 +416,6 @@ s32 get_asset_offset(char* assetName, s32* compressedSize) {
     }
     *compressedSize = curAsset->compressedLength;
     ret = ASSET_TABLE_FIRST_ENTRY + curAsset->offset;
-#ifdef PORT
-    port_hd_note_asset_offset(assetName, ret);
-#endif
     heap_free(assetTableBuffer);
     return ret;
 }

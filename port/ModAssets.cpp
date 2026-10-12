@@ -154,10 +154,17 @@ void Downscale(Fast::Texture* tex, const std::string& path) {
     if (tex->Type != Fast::TextureType::RGBA32bpp) {
         return;
     }
+    // A 5x pack halved twice lands on 1.25x, which misplaces rows: bring it to a whole 4x first.
+    PortHdShrinkTexture(tex);
     uint32_t w = tex->Width, h = tex->Height;
     const uint32_t origW = w, origH = h;
     uint8_t* data = tex->ImageData;
-    while (w * h > kMaxTexels && w >= 2 && h >= 2 && (w % 2) == 0 && (h % 2) == 0) {
+    // only halve while the HD/original ratio stays a whole number
+    auto evenScale = [&](uint32_t curW) {
+        const float s = tex->VPixelScale * curW / origW;
+        return s >= 2.0f && s == (float)(uint32_t)s && (uint32_t)s % 2 == 0;
+    };
+    while (w * h > kMaxTexels && w >= 2 && h >= 2 && (w % 2) == 0 && (h % 2) == 0 && evenScale(w)) {
         uint32_t nw = w / 2, nh = h / 2;
         uint8_t* out = new uint8_t[nw * nh * 4];
         for (uint32_t y = 0; y < nh; y++) {
@@ -281,13 +288,13 @@ extern "C" void Port_ModSetTexArchive(const char* archiveName) {
     snprintf(sTexArchive, sizeof(sTexArchive), "%s", archiveName != nullptr ? archiveName : "");
 }
 
-extern "C" void Port_ModRegisterMapTexture(const void* raster, uint32_t size, const char* name, int aux) {
+extern "C" void Port_ModRegisterMapTexture(const void* raster, uint32_t size, const char* name, const char* suffix) {
     Init();
     if (!sHasTextures || raster == nullptr || size == 0 || sTexArchive[0] == '\0') {
         return;
     }
     char path[96];
-    snprintf(path, sizeof(path), "textures/%s/%.32s%s", sTexArchive, name, aux ? "_aux" : "");
+    snprintf(path, sizeof(path), "textures/%s/%.32s%s", sTexArchive, name, suffix);
     if (sModFiles.find(path) == sModFiles.end()) {
         Unregister((uintptr_t)raster, size);
         return;

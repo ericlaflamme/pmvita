@@ -33,9 +33,9 @@ int Port_ModLoadMessage(unsigned int msgID, void* dest, unsigned int cap);
  * and applies font overrides. */
 void Port_ModOnRomRead(uint32_t rom, void* dest, uint32_t size);
 
-/* Map textures come from compressed archives, so they are registered by name. */
+/* Map textures come from compressed archives, so they are registered by name; suffix is "", "_mm1" or "_aux". */
 void Port_ModSetTexArchive(const char* archiveName);
-void Port_ModRegisterMapTexture(const void* raster, uint32_t size, const char* name, int aux);
+void Port_ModRegisterMapTexture(const void* raster, uint32_t size, const char* name, const char* suffix);
 
 /* Sprite rasters and backgrounds: register a loaded image under its PaperBoat path. */
 void Port_ModRegisterPath(const void* data, uint32_t size, const char* path);
@@ -59,4 +59,6 @@ std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, const void* 
  * (palette variant, "" to keep it SD); other paths come back unchanged. */
 std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
                                 const uint8_t** coverageTlut);
+/* port/hd_textures.cpp: shrink an RGBA32 HD texture to 4x the original, keeping a whole scale ratio. */
+void PortHdShrinkTexture(Fast::Texture* tex);
 #endif
