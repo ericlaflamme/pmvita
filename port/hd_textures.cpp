@@ -221,14 +221,6 @@ uint32_t sMapTexMissing = 0;
 
 // Sprites are keyed as (isPlayer << 31 | sprite << 16 | raster or palette index).
 constexpr uint32_t kPlayerBit = 1u << 31;
-constexpr size_t kSpriteBudget = 32u << 20;
-struct SpriteRaster {
-    uint32_t key, size, hash;
-};
-struct SpriteSlot {
-    HdEntry hd;
-    uint32_t lastUse = 0;
-};
 struct SpriteInfo {
     std::vector<std::array<uint8_t, kTlutBytes>> palettes;
     std::vector<int8_t> defaultPal;                   // per raster
@@ -250,10 +242,8 @@ struct GameSpriteData {
     uint8_t** palettes;
     int32_t maxComponents, colorVariations;
 };
-std::unordered_map<const void*, SpriteRaster> sSpriteRasters;
 std::unordered_map<uint32_t, SpriteInfo> sSprites; // owner -> info
 std::unordered_map<const void*, uint32_t> sSpritePalByAddr;
-std::unordered_map<uint64_t, SpriteSlot> sSpriteCache; // (raster key << 32) | palette key
 struct CompHdKey {
     const void* cmdList;
     uint32_t owner, overridePal;
@@ -268,7 +258,6 @@ struct CompHdKeyHash {
 };
 std::unordered_map<CompHdKey, bool, CompHdKeyHash> sCompHasHd; // cleared on sprite load: cmdLists move
 std::unordered_map<const void*, const void*> sDrawComp;        // raster image -> cmdList it was last drawn by
-size_t sSpriteBytes = 0;
 uint32_t sFrame = 0;
 
 // Large images (backgrounds, title, logos, portraits...) that the game draws as strips of rows.
@@ -733,86 +722,34 @@ bool AnimFitsHd(uint32_t rasterKey, uint32_t palKey, const void* img) {
     return CompHasHd(owner, info, dit->second, cit->second, overridePal);
 }
 
-// Only drop sprites unused for a couple of frames: the interpreter may still read this frame's data.
-void EvictSprites() {
-    if (sSpriteBytes <= kSpriteBudget) {
-        return;
-    }
-    std::vector<std::pair<uint32_t, uint64_t>> old;
-    for (const auto& s : sSpriteCache) {
-        if (s.second.lastUse + 2 < sFrame) {
-            old.emplace_back(s.second.lastUse, s.first);
-        }
-    }
-    std::sort(old.begin(), old.end());
-    for (const auto& o : old) {
-        if (sSpriteBytes <= kSpriteBudget * 3 / 4) {
-            break;
-        }
-        auto it = sSpriteCache.find(o.second);
-        sSpriteBytes -= it->second.hd.data.size();
-        sSpriteCache.erase(it);
-    }
-}
-
-bool FetchSprite(uint32_t rasterKey, uint32_t palKey, Fast::RawTexReplacement* out) {
-    const uint64_t key = ((uint64_t)rasterKey << 32) | palKey;
-    auto it = sSpriteCache.find(key);
-    if (it == sSpriteCache.end()) {
-        EvictSprites();
-        it = sSpriteCache.emplace(key, SpriteSlot{}).first;
-        std::string path = SpritePath(rasterKey, palKey);
-        if (LoadHd(path, it->second.hd)) {
-            sSpriteBytes += it->second.hd.data.size();
-            if (sLoaded++ == 0) {
-                fprintf(stderr, "[HD] first replacement: %s\n", path.c_str());
-            }
-        }
-    }
-    it->second.lastUse = sFrame;
-    const HdEntry& e = it->second.hd;
-    if (!e.valid) {
-        return false;
-    }
-    out->data = e.data.data();
-    out->width = e.width;
-    out->height = e.height;
-    out->h_byte_scale = e.hByteScale;
-    out->v_pixel_scale = e.vPixelScale;
-    return true;
-}
-
-bool LookupSprite(const void* addr, const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplacement* out) {
-    if (tlut == nullptr) {
-        return false;
-    }
-    // Lit maps also read each sprite through a per-frame shading palette (tile 0, TLUT 1).
-    if (gSpriteShadingProfile != nullptr && (*gSpriteShadingProfile & 1)) {
-        out->coverage_tlut = tlut;
-    }
+// HD file for a sprite raster drawn with this TLUT: the variant the pack colored with it, or "" for SD.
+std::string SpriteVariant(uint32_t rasterKey, const void* img, const uint8_t* tlut) {
     // NPCs often draw from copies of their palettes, so match by content first.
-    const uint32_t owner = r.key & 0xFFFF0000u;
+    const uint32_t owner = rasterKey & 0xFFFF0000u;
     auto own = sSprites.find(owner);
     if (own != sSprites.end()) {
         const auto& pals = own->second.palettes;
         for (uint32_t q = 0; q < pals.size(); q++) {
-            if (memcmp(tlut, pals[q].data(), kTlutBytes) == 0 && AnimFitsHd(r.key, owner | q, addr) &&
-                FetchSprite(r.key, owner | q, out)) {
-                return true;
+            if (memcmp(tlut, pals[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, owner | q, img)) {
+                continue;
+            }
+            std::string path = SpritePath(rasterKey, owner | q);
+            if (!path.empty()) {
+                return path;
             }
         }
     }
     auto pit = sSpritePalByAddr.find(tlut);
     if (pit == sSpritePalByAddr.end() || (pit->second & 0xFFFF0000u) == owner) {
-        return false;
+        return "";
     }
     auto fit = sSprites.find(pit->second & 0xFFFF0000u);
     const uint32_t q = pit->second & 0xFFFF;
     if (fit == sSprites.end() || q >= fit->second.palettes.size() ||
-        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0 || !AnimFitsHd(r.key, pit->second, addr)) {
-        return false;
+        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, pit->second, img)) {
+        return "";
     }
-    return FetchSprite(r.key, pit->second, out);
+    return SpritePath(rasterKey, pit->second);
 }
 
 bool LookupRegion(const uint8_t* addr, uint32_t fmt, const uint8_t* tlut, Fast::RawTexReplacement* out) {
@@ -875,16 +812,6 @@ bool PortRawTexLookup(const void* addr, uint32_t fmt, const void* tlut, Fast::Ra
         }
         return LookupMapTex(mit->second, out);
     }
-    if (fmt == G_IM_FMT_CI) {
-        auto sit = sSpriteRasters.find(addr);
-        if (sit != sSpriteRasters.end()) {
-            if (SampleHash(addr, sit->second.size) != sit->second.hash) {
-                sSpriteRasters.erase(sit);
-                return false;
-            }
-            return LookupSprite(addr, sit->second, t, out);
-        }
-    }
     if (!sRegions.empty() && LookupRegion(a, fmt, t, out)) {
         return true;
     }
@@ -939,13 +866,7 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
         sSpritePalByAddr[sd->palettes[p]] = owner | p;
     }
     for (uint32_t r = 0; sd->rasters[r] != end; r++) {
-        const GameRaster* gr = sd->rasters[r];
-        info.defaultPal.push_back(gr->palette);
-        // Player raster images live in a reused cache; those are reported as they're loaded.
-        if (!isPlayer && gr->image != nullptr) {
-            const uint32_t size = gr->width * gr->height / 2;
-            sSpriteRasters[gr->image] = { owner | r, size, SampleHash(gr->image, size) };
-        }
+        info.defaultPal.push_back(sd->rasters[r]->palette);
     }
 
     auto* const* anims = reinterpret_cast<GameAnimComp** const*>(sd + 1);
@@ -1003,11 +924,31 @@ extern "C" void port_hd_sprite_draw(const void* img, const void* cmdList) {
     }
 }
 
-extern "C" void port_hd_sprite_raster(int32_t isPlayer, int32_t sprite, int32_t raster, const void* img, uint32_t size) {
-    if (img != nullptr && size > 0) {
-        const uint32_t key = (isPlayer ? kPlayerBit : 0) | ((uint32_t)sprite << 16) | (uint32_t)raster;
-        sSpriteRasters[img] = { key, size, SampleHash(img, size) };
+std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
+                                const uint8_t** coverageTlut) {
+    unsigned sprite, raster;
+    bool isPlayer;
+    if (sscanf(path.c_str(), "sprites/npc_sprite_%u_raster_%u", &sprite, &raster) == 2) {
+        isPlayer = false;
+    } else if (sscanf(path.c_str(), "sprites/player_sprite_%u_raster_%u", &sprite, &raster) == 2) {
+        isPlayer = true;
+    } else {
+        return path;
     }
+    if (tlut == nullptr) {
+        return "";
+    }
+    const uint8_t* t = static_cast<const uint8_t*>(tlut);
+    const uint32_t key = (isPlayer ? kPlayerBit : 0) | (sprite << 16) | raster;
+    std::string variant = SpriteVariant(key, img, t);
+    if (variant.empty()) {
+        return "";
+    }
+    // Lit maps also read each sprite through a per-frame shading palette (tile 0, TLUT 1).
+    if (gSpriteShadingProfile != nullptr && (*gSpriteShadingProfile & 1)) {
+        *coverageTlut = t;
+    }
+    return variant.substr(4); // drop "alt/": the mod loader layers it back on
 }
 
 extern "C" void port_hd_frame() {

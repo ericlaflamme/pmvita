@@ -311,9 +311,11 @@ extern "C" void Port_ModRegisterImage(const void* data, uint32_t size, uint32_t 
     Register(data, size, path, rowBytes);
 }
 
-std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, uint32_t* hdOffset, uint32_t* hdRowsSkipped) {
+std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, const void* tlut, uint32_t* hdOffset,
+                                                  uint32_t* hdRowsSkipped, const uint8_t** coverageTlut) {
     *hdOffset = 0;
     *hdRowsSkipped = 0;
+    *coverageTlut = nullptr;
     if (!sHasTextures || sRegistry.empty()) {
         return nullptr;
     }
@@ -334,7 +336,10 @@ std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, uint32_t* hd
     }
     const uint32_t rowsIn = inner != 0 ? inner / it->second.rowBytes : 0;
 
-    const std::string& path = it->second.path;
+    const std::string path = PortHdSpriteVariant(it->second.path, addr, tlut, coverageTlut);
+    if (path.empty()) {
+        return nullptr;
+    }
     auto rowOffset = [&](const std::shared_ptr<Fast::Texture>& t) -> std::shared_ptr<Fast::Texture> {
         if (rowsIn == 0) {
             return t;

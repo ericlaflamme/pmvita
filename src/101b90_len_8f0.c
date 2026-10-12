@@ -499,7 +499,6 @@ IMG_PTR spr_get_player_raster(s32 rasterIndex, s32 playerSpriteID) {
     playerRasterInfo = PlayerRasterLoadDesc[PlayerRasterLoadDescBeginSpriteIndex[playerSpriteID] + rasterIndex];
     nuPiReadRom(SpriteDataHeader[0] + (playerRasterInfo & 0xFFFFF), cacheEntry->raster, (playerRasterInfo >> 0x10) & 0xFFF0);
 #ifdef PORT
-    port_hd_sprite_raster(true, playerSpriteID, rasterIndex, cacheEntry->raster, (playerRasterInfo >> 0x10) & 0xFFF0);
     {
         char modPath[48];
         snprintf(modPath, sizeof(modPath), "sprites/player_sprite_%d_raster_%d", playerSpriteID, rasterIndex);

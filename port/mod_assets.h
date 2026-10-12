@@ -46,9 +46,17 @@ void Port_ModRegisterImage(const void* data, uint32_t size, uint32_t rowBytes, c
 }
 
 #include <memory>
+#include <string>
 namespace Fast {
 class Texture;
 }
-/* Replacement texture for a raw texture pointer, or nullptr. Used by the Fast3D SETTIMG handler. */
-std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, uint32_t* hdOffset, uint32_t* hdRowsSkipped);
+/* Replacement texture for a raw texture pointer drawn with the given TLUT, or nullptr. Used by the
+ * Fast3D SETTIMG handler. coverageTlut is set when the texture is also read through the sprite shading
+ * palette. */
+std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, const void* tlut, uint32_t* hdOffset,
+                                                  uint32_t* hdRowsSkipped, const uint8_t** coverageTlut);
+/* port/hd_textures.cpp: the sprite file to draw for a registered sprite path under this TLUT
+ * (palette variant, "" to keep it SD); other paths come back unchanged. */
+std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
+                                const uint8_t** coverageTlut);
 #endif

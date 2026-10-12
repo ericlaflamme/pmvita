@@ -4379,7 +4379,9 @@ bool gfx_set_timg_handler_rdp(F3DGfx** cmd0) {
         } else {
             // PORT: a ROM texture a mod replaces draws from the mod's resource instead
             uint32_t hdOffset, hdRowsSkipped;
-            std::shared_ptr<Fast::Texture> tex = Port_ModTextureFor(imgData, &hdOffset, &hdRowsSkipped);
+            const uint8_t* coverageTlut;
+            std::shared_ptr<Fast::Texture> tex = Port_ModTextureFor(imgData, gfx->mRdp->palettes[0], &hdOffset,
+                                                                    &hdRowsSkipped, &coverageTlut);
             if (tex != nullptr) {
                 i = (uintptr_t)tex->ImageData + hdOffset;
                 texFlags = tex->Flags;
@@ -4389,6 +4391,7 @@ bool gfx_set_timg_handler_rdp(F3DGfx** cmd0) {
                 rawTexMetdata.v_pixel_scale = tex->VPixelScale;
                 rawTexMetdata.type = tex->Type;
                 rawTexMetdata.resource = tex;
+                rawTexMetdata.coverage_tlut = coverageTlut;
             }
         }
     }
