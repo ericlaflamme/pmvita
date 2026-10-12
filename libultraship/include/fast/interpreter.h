@@ -217,6 +217,7 @@ struct RawTexMetadata {
     float h_byte_scale = 1, v_pixel_scale = 1;
     std::shared_ptr<Fast::Texture> resource;
     Fast::TextureType type;
+    const uint8_t* coverage_tlut = nullptr; // PORT: see RawTexReplacement
 };
 
 // PORT: RGBA32 stand-in for a texture the game loaded from ROM, looked up by address + active TLUT.
@@ -224,6 +225,9 @@ struct RawTexReplacement {
     const uint8_t* data;
     uint16_t width, height;
     float h_byte_scale, v_pixel_scale;
+    // Non-null: a CI tile reading this through another palette gets that palette's colors, picked by
+    // whether this TLUT leaves the texel transparent (sprite shading).
+    const uint8_t* coverage_tlut;
 };
 typedef bool (*RawTexReplacementLookup)(const void* addr, uint32_t fmt, const void* tlut, RawTexReplacement* out);
 extern RawTexReplacementLookup gRawTexReplacementLookup;

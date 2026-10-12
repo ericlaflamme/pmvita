@@ -1202,6 +1202,42 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     uint32_t numLoadedBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].size_bytes;
     uint32_t numOriginallyLoadedBytes = mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].orig_size_bytes;
 
+    // PORT: the stand-in has no color indices, so blend the tile palette's transparent and opaque entries
+    // by the stand-in's alpha.
+    uint8_t coverageColors[2][4];
+    bool recolor = false;
+    const uint32_t palIdx = mRdp->texture_tile[tile].palette;
+    if (metadata->coverage_tlut != nullptr && mRdp->texture_tile[tile].fmt == G_IM_FMT_CI && palIdx != 0 &&
+        mRdp->palettes[palIdx / 8] != nullptr) {
+        const uint8_t* pal = (palIdx < 8 && mRdp->palette1_pal_index == (int8_t)palIdx)
+                                 ? mRdp->palettes[1]
+                                 : mRdp->palettes[palIdx / 8] + (palIdx % 8) * 16 * 2;
+        int found[2] = { -1, -1 };
+        for (int idx = 0; idx < 16; idx++) {
+            int& slot = found[metadata->coverage_tlut[idx * 2 + 1] & 1];
+            if (slot < 0) {
+                slot = idx;
+            }
+        }
+        for (int k = 0; k < 2; k++) {
+            const int idx = found[k] >= 0 ? found[k] : found[1 - k];
+            const uint16_t col16 = (pal[idx * 2] << 8) | pal[idx * 2 + 1];
+            coverageColors[k][0] = SCALE_5_8(col16 >> 11);
+            coverageColors[k][1] = SCALE_5_8((col16 >> 6) & 0x1f);
+            coverageColors[k][2] = SCALE_5_8((col16 >> 1) & 0x1f);
+            coverageColors[k][3] = (col16 & 1) ? 255 : 0;
+        }
+        recolor = true;
+    }
+    auto applyCoverage = [&](uint8_t* px, uint32_t count) {
+        for (uint32_t p = 0; p < count; p++, px += 4) {
+            const uint32_t a = px[3];
+            for (int c = 0; c < 4; c++) {
+                px[c] = (coverageColors[0][c] * (255 - a) + coverageColors[1][c] * a) / 255;
+            }
+        }
+    };
+
     uint32_t resultOrigLineSize = mRdp->texture_tile[tile].line_size_bytes;
     switch (mRdp->texture_tile[tile].siz) {
         case G_IM_SIZ_32b:
@@ -1225,6 +1261,12 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
 
     if (resultNewLineSize == 4 * width && resultNewHeight == height) {
         // Can use the texture directly since it has the correct dimensions
+        if (recolor) {
+            memcpy(mTexUploadBuffer, addr, (size_t)width * height * 4);
+            applyCoverage(mTexUploadBuffer, (uint32_t)width * height);
+            mRapi->UploadTexture(mTexUploadBuffer, width, height);
+            return;
+        }
         mRapi->UploadTexture(addr, width, height);
         return;
     }
@@ -1257,6 +1299,10 @@ void Interpreter::ImportTextureRaw(int tile, bool importReplacement) {
     // Set the remaining bytes to load as 0
     if (numLoadedBytes > resourceImageSizeBytes) {
         memset(mTexUploadBuffer + resourceImageSizeBytes, 0, numLoadedBytes - resourceImageSizeBytes);
+    }
+
+    if (recolor) {
+        applyCoverage(mTexUploadBuffer, resultNewLineSize / 4 * resultNewHeight);
     }
 
     mRapi->UploadTexture(mTexUploadBuffer, resultNewLineSize / 4, resultNewHeight);
@@ -2690,7 +2736,7 @@ void Interpreter::GfxDpSetTextureImage(uint32_t format, uint32_t size, uint32_t 
     //         rawTexMetdata.resource ? rawTexMetdata.resource->GetInitData()->Path.c_str() : nullptr, width, size);
     if (gRawTexReplacementLookup != nullptr && addr != nullptr && rawTexMetdata.resource == nullptr &&
         texFlags == 0) {
-        RawTexReplacement rep;
+        RawTexReplacement rep{};
         if (gRawTexReplacementLookup(addr, format, mRdp->palettes[0], &rep)) {
             addr = rep.data;
             texFlags = TEX_FLAG_LOAD_AS_RAW;
@@ -2699,6 +2745,7 @@ void Interpreter::GfxDpSetTextureImage(uint32_t format, uint32_t size, uint32_t 
             rawTexMetdata.h_byte_scale = rep.h_byte_scale;
             rawTexMetdata.v_pixel_scale = rep.v_pixel_scale;
             rawTexMetdata.type = TextureType::RGBA32bpp;
+            rawTexMetdata.coverage_tlut = rep.coverage_tlut;
         }
     }
     mRdp->texture_to_load.addr = (const uint8_t*)addr;
