@@ -299,8 +299,16 @@ uint32_t SampleHash(const void* p, uint32_t size) {
 // VPixelScale is the exact HD/original pixel ratio; shrink to kTargetScale. Packs use odd ratios
 // (13x, 5x...), so resample by kTargetScale/VPixelScale when that lands on whole pixels, else by
 // the largest whole divisor. A fractional ratio would misplace rows. num == den: nothing to do.
+// Packs store scales like 103.99999 for 104; the interpreter truncates size * scale, so a texture came
+// out 127x255 instead of 128x256 and every row slid sideways. Snap to the nearest 1/64.
+float SnapScale(float s) {
+    const float r = std::round(s * 64.0f) / 64.0f;
+    return std::fabs(r - s) < 1e-3f ? r : s;
+}
+
 void ShrinkRgba(const uint8_t* src, uint32_t srcW, uint32_t srcH, float vScale, std::vector<uint8_t>& out,
                 uint32_t& num, uint32_t& den) {
+    vScale = SnapScale(vScale);
     const uint32_t vp = (uint32_t)vScale;
     num = 1;
     den = 1;
@@ -368,8 +376,8 @@ bool LoadHd(const std::string& path, HdEntry& e) {
     }
     e.width = tex->Width * num / den;
     e.height = tex->Height * num / den;
-    e.hByteScale = tex->HByteScale * num / den;
-    e.vPixelScale = tex->VPixelScale * num / den;
+    e.hByteScale = SnapScale(tex->HByteScale * num / den);
+    e.vPixelScale = SnapScale(tex->VPixelScale * num / den);
     e.valid = true;
 
     tex.reset();
@@ -962,6 +970,8 @@ void PortHdShrinkTexture(Fast::Texture* tex) {
     uint32_t num, den;
     ShrinkRgba(tex->ImageData, tex->Width, tex->Height, tex->VPixelScale, out, num, den);
     if (num == den) {
+        tex->HByteScale = SnapScale(tex->HByteScale);
+        tex->VPixelScale = SnapScale(tex->VPixelScale);
         return;
     }
     uint8_t* data = new uint8_t[out.size()];
@@ -971,8 +981,8 @@ void PortHdShrinkTexture(Fast::Texture* tex) {
     tex->ImageDataSize = out.size();
     tex->Width = tex->Width * num / den;
     tex->Height = tex->Height * num / den;
-    tex->HByteScale = tex->HByteScale * num / den;
-    tex->VPixelScale = tex->VPixelScale * num / den;
+    tex->HByteScale = SnapScale(tex->HByteScale * num / den);
+    tex->VPixelScale = SnapScale(tex->VPixelScale * num / den);
 }
 
 std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
