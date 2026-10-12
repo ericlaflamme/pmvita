@@ -5,6 +5,7 @@
 #ifdef PORT
 #include <stdio.h>
 #include "rom_offsets.h"
+#include "port/mod_assets.h"
 void nuPiReadRom(u32 rom_addr, void* buf_ptr, u32 size);
 
 // On N64, buffer pointers are in KSEG0 (0x80000000+), negative as s32.
@@ -1493,8 +1494,23 @@ void dma_load_msg(u32 msgID, void* dest) {
     dma_copy(&langPtr[(u32)offset[0]], &langPtr[(u32)offset[1]], dest);
 }
 #else
+#ifdef PORT
+void dma_load_msg(u32 msgID, void* dest);
+
+// mod text first, then the ROM; cap is the size of dest
+void dma_load_msg_capped(u32 msgID, void* dest, u32 cap) {
+    if (Port_ModLoadMessage(msgID, dest, cap)) {
+        return;
+    }
+    dma_load_msg(msgID, dest);
+}
+#endif
+
 void dma_load_msg(u32 msgID, void* dest) {
 #ifdef PORT
+    if (Port_ModLoadMessage(msgID, dest, 0x400)) {
+        return;
+    }
     // PORT: On 64-bit PC, we can't use u8* for ROM offsets (they're 4-byte big-endian u32s).
     // Read offsets as u32, byte-swap from big-endian, and use nuPiReadRom directly.
     // PORT: Guard against invalid message sections.
@@ -1863,7 +1879,7 @@ void get_msg_properties(s32 msgID, s32* height, s32* width, s32* maxLineChars, s
     s32 functionCode;
     u8 packedScaleY;
     f32 scale;
-    s32 temp;
+    s32 temp = 4; // PORT: the switch can jump past the assignment
 
     u16 lineWidths[32];
     u16 lineCharNumbers[32];

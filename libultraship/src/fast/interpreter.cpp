@@ -31,6 +31,7 @@
 
 #include "fast/interpreter.h"
 #include "fast/lus_gbi.h"
+#include "mod_assets.h"
 #include "fast/backends/gfx_window_manager_api.h"
 #include "fast/backends/gfx_rendering_api.h"
 
@@ -517,6 +518,9 @@ void Interpreter::TextureCacheClear() {
     mTextureCache.lru.clear();
 }
 
+// PORT: CPU sentinel address -> GPU framebuffer id, see gfx_register_fb_texture
+static std::unordered_map<uintptr_t, int> sPortFbTextures;
+
 extern int gPortFrameTris;
 extern int gPortFrameTexUploads;
 void port_gl_read_pixel(int x, int y, uint8_t* rgba);
@@ -597,6 +601,17 @@ const uint8_t* Interpreter::GetReplacementData(const RawTexMetadata* metadata, c
     return (it != mMaskedTextures.end() && it->second.replacementData) ? it->second.replacementData : fallback;
 }
 
+// PORT: a LoadBlock tile can be larger than the data it loaded (a 16x16 quadrant drawn
+// through a mirrored 32x32 tile). Size the upload from the tile's line and the bytes loaded.
+static void port_fix_loadblock_dims(uint32_t lineBytes, uint32_t sizeBytes, uint32_t bitsPerPixel,
+                                    uint32_t& width, uint32_t& height) {
+    if (lineBytes == 0 || (uint64_t)width * height * bitsPerPixel / 8 <= sizeBytes) {
+        return;
+    }
+    width = lineBytes * 8 / bitsPerPixel;
+    height = sizeBytes / lineBytes;
+}
+
 void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
     const RawTexMetadata* metadata = &mRdp->loaded_texture[mRdp->texture_tile[tile].tmem_index].raw_tex_metadata;
     const uint8_t* addr =
@@ -624,6 +639,7 @@ void Interpreter::ImportTextureRgba16(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 16, width, height);
         fullImageLineSizeBytes = width * 2;
     } else {
         if (line_size_bytes == 0) return;
@@ -747,6 +763,7 @@ void Interpreter::ImportTextureIA4(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 4, width, height);
     } else {
         if (lineSizeBytes == 0) return;
         width = lineSizeBytes * 2; // 2 pixels per byte for IA4
@@ -796,6 +813,7 @@ void Interpreter::ImportTextureIA8(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 8, width, height);
     } else {
         if (lineSizeBytes == 0) return;
         width = lineSizeBytes; // 1 byte per pixel for IA8
@@ -836,6 +854,7 @@ void Interpreter::ImportTextureIA16(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, size_bytes, 16, width, height);
         full_image_line_size_bytes = width * 2;
     } else {
         if (line_size_bytes == 0) return;
@@ -899,6 +918,7 @@ void Interpreter::ImportTextureI4(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 4, width, height);
         // Adjust fullImageLineSizeBytes for the LoadBlock case
         fullImageLineSizeBytes = width / 2;
     } else {
@@ -977,6 +997,7 @@ void Interpreter::ImportTextureI8(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 8, width, height);
     } else {
         if (line_size_bytes == 0) return;
         width = line_size_bytes; // 1 byte per pixel for I8
@@ -1061,6 +1082,7 @@ void Interpreter::ImportTextureCi4(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 4, width, height);
     } else {
         if (lineSizeBytes == 0) return;
         // LoadTile: line_size_bytes is already the correct per-row byte count
@@ -1125,6 +1147,7 @@ void Interpreter::ImportTextureCi8(int tile, bool importReplacement) {
         }
         width = lrs - uls + 1;
         height = lrt - ult + 1;
+        port_fix_loadblock_dims(mRdp->texture_tile[tile].line_size_bytes, sizeBytes, 8, width, height);
     } else {
         uint32_t resultLineSizeBytes = lineSizeBytes;
         if (metadata->h_byte_scale != 1) {
@@ -1251,6 +1274,17 @@ void Interpreter::ImportTexture(int i, int tile, bool importReplacement) {
     const uint8_t* origAddr =
         GetReplacementData(importReplacement ? metadata : nullptr,
             mRdp->loaded_texture[tmemIdex].addr);
+
+    // PORT: a registered sentinel address binds its GPU framebuffer instead of importing
+    if (!importReplacement && i == 0 && origAddr != nullptr) {
+        auto fbIt = sPortFbTextures.find((uintptr_t)origAddr);
+        if (fbIt != sPortFbTextures.end()) {
+            Flush();
+            mRapi->SelectTextureFb(fbIt->second);
+            mRenderingState.mTextures[i] = nullptr;
+            return;
+        }
+    }
 
     TextureCacheKey key;
     if (fmt == G_IM_FMT_CI) {
@@ -4295,6 +4329,20 @@ bool gfx_set_timg_handler_rdp(F3DGfx** cmd0) {
             rawTexMetdata.v_pixel_scale = tex->VPixelScale;
             rawTexMetdata.type = tex->Type;
             rawTexMetdata.resource = tex;
+        } else {
+            // PORT: a ROM texture a mod replaces draws from the mod's resource instead
+            uint32_t hdOffset, hdRowsSkipped;
+            std::shared_ptr<Fast::Texture> tex = Port_ModTextureFor(imgData, &hdOffset, &hdRowsSkipped);
+            if (tex != nullptr) {
+                i = (uintptr_t)tex->ImageData + hdOffset;
+                texFlags = tex->Flags;
+                rawTexMetdata.width = tex->Width;
+                rawTexMetdata.height = tex->Height - hdRowsSkipped;
+                rawTexMetdata.h_byte_scale = tex->HByteScale;
+                rawTexMetdata.v_pixel_scale = tex->VPixelScale;
+                rawTexMetdata.type = tex->Type;
+                rawTexMetdata.resource = tex;
+            }
         }
     }
 
@@ -4679,6 +4727,18 @@ bool gfx_set_fill_color_handler_rdp(F3DGfx** cmd0) {
     return false;
 }
 
+void port_gfx_set_strict_decal(bool on);
+
+bool gfx_set_strict_decal_handler_custom(F3DGfx** cmd0) {
+    Interpreter* gfx = mInstanceRaw;
+    if (!gfx) return false;
+    F3DGfx* cmd = *cmd0;
+
+    gfx->Flush();
+    port_gfx_set_strict_decal(cmd->words.w1 != 0);
+    return false;
+}
+
 bool gfx_set_intensity_handler_custom(F3DGfx** cmd0) {
     Interpreter* gfx = mInstanceRaw;
     if (!gfx) return false;
@@ -4946,6 +5006,7 @@ static constexpr UcodeHandler rdpHandlers = {
 static constexpr UcodeHandler otrHandlers = {
     { OTR_G_SETTIMG_OTR_HASH,
       { "G_SETTIMG_OTR_HASH", gfx_set_timg_otr_hash_handler_custom } },       // G_SETTIMG_OTR_HASH (0x20)
+    { OPCODE(0x4b), { "G_SET_STRICT_DECAL", gfx_set_strict_decal_handler_custom } },
     { OTR_G_SETFB, { "G_SETFB", gfx_set_fb_handler_custom } },                // G_SETFB (0x21)
     { OTR_G_RESETFB, { "G_RESETFB", gfx_reset_fb_handler_custom } },          // G_RESETFB (0x22)
     { OTR_G_SETTIMG_FB, { "G_SETTIMG_FB", gfx_set_timg_fb_handler_custom } }, // G_SETTIMG_FB (0x23)
@@ -5220,6 +5281,19 @@ static void gfx_step() {
         handled = true;
         sUnhandledCount = 0;
         if (gfx_fill_wide_rect_handler_custom(&cmd)) {
+            return;
+        }
+    } else if (opcode == OPCODE(0x4b)) {
+        handled = true;
+        sUnhandledCount = 0;
+        if (gfx_set_strict_decal_handler_custom(&cmd)) {
+            return;
+        }
+    } else if (opcode == OTR_G_COPYFB) {
+        // PORT: the underwater effect mirrors the frame through this
+        handled = true;
+        sUnhandledCount = 0;
+        if (gfx_copy_fb_handler_custom(&cmd)) {
             return;
         }
     } else
@@ -5639,7 +5713,13 @@ void Interpreter::CopyFrameBuffer(int fb_dst_id, int fb_src_id, bool copyOnce, b
 
     // When rendering to the main window buffer or MSAA is enabled with a buffer size equal to the view port,
     // then the source coordinates must account for any docked ImGui elements
-    if (fb_src_id == 0 || (mMsaaLevel > 1 && mCurDimensions.width == mGameWindowViewport.width &&
+    // PORT: no ImGui game window here, so the viewport is never set; the frame is the whole buffer
+    if (mGameWindowViewport.width == 0 || mGameWindowViewport.height == 0) {
+        srcX0 = 0;
+        srcY0 = 0;
+        srcX1 = mCurDimensions.width;
+        srcY1 = mCurDimensions.height;
+    } else if (fb_src_id == 0 || (mMsaaLevel > 1 && mCurDimensions.width == mGameWindowViewport.width &&
                            mCurDimensions.height == mGameWindowViewport.height)) {
         srcX0 = mGameWindowViewport.x;
         srcY0 = mGameWindowViewport.y;
@@ -5867,6 +5947,10 @@ void gfx_cc_get_features(uint64_t shader_id0, uint32_t shader_id1, struct CCFeat
     if (cc_features->usedTextures[1] && shader_id1 & SHADER_OPT(TEXEL1_BLEND)) {
         cc_features->used_blend[1] = true;
     }
+}
+
+extern "C" void gfx_register_fb_texture(const void* cpuAddr, int fbId) {
+    Fast::sPortFbTextures[(uintptr_t)cpuAddr] = fbId;
 }
 
 extern "C" int gfx_create_framebuffer(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,

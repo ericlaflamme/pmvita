@@ -6,6 +6,9 @@
 #include "rom_offsets.h"
 #include <stdio.h>
 extern void gfx_texture_cache_clear(void);
+#ifdef PORT
+#include "port/mod_assets.h"
+#endif
 extern float GameEngine_GetAspectRatio(void);
 
 static void port_draw_bg_ext_rect(s32 x0, s32 x1, s32 y0, s32 y1, s32 texel) {
@@ -103,6 +106,12 @@ void load_map_bg(char* optAssetName) {
             gBackgroundImage.startY  = read_be_u16(buf + 10);
             gBackgroundImage.width   = read_be_u16(buf + 12);
             gBackgroundImage.height  = read_be_u16(buf + 14);
+            {
+                char modPath[48];
+                snprintf(modPath, sizeof(modPath), "backgrounds/%s", assetName);
+                Port_ModRegisterImage(gBackgroundImage.raster, gBackgroundImage.width * gBackgroundImage.height,
+                                      gBackgroundImage.width, modPath);
+            }
 
             {
                 char hdPath[48];
