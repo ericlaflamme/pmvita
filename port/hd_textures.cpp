@@ -752,6 +752,14 @@ std::string SpriteVariant(uint32_t rasterKey, const void* img, const uint8_t* tl
     return SpritePath(rasterKey, pit->second);
 }
 
+// Diagnostic: say once per image and reason why a large image stays SD.
+void RegionSd(const std::string& path, const char* why) {
+    static std::unordered_set<std::string> sLogged;
+    if (sLogged.insert(path + why).second) {
+        fprintf(stderr, "[HD] %s stays SD: %s\n", path.c_str(), why);
+    }
+}
+
 bool LookupRegion(const uint8_t* addr, uint32_t fmt, const uint8_t* tlut, Fast::RawTexReplacement* out) {
     auto it = sRegions.upper_bound(addr);
     if (it == sRegions.begin()) {
@@ -760,18 +768,27 @@ bool LookupRegion(const uint8_t* addr, uint32_t fmt, const uint8_t* tlut, Fast::
     --it;
     const HdRegion& r = it->second;
     const uint32_t off = (uint32_t)(addr - it->first);
-    if (off >= r.size || off % r.rowBytes != 0) {
+    if (off >= r.size) {
+        return false;
+    }
+    if (off % r.rowBytes != 0) {
+        RegionSd(r.path, "draw starts mid-row");
         return false;
     }
     if (!r.hashed) {
         it->second.hash = SampleHash(it->first, r.size);
         it->second.hashed = true;
     } else if (SampleHash(it->first, r.size) != r.hash) {
+        RegionSd(r.path, "buffer changed since it was loaded");
         sRegions.erase(it);
         return false;
     }
-    if ((fmt == G_IM_FMT_CI) != !r.pal.empty() ||
-        (!r.pal.empty() && (tlut == nullptr || memcmp(tlut, r.pal.data(), r.pal.size()) != 0))) {
+    if ((fmt == G_IM_FMT_CI) != !r.pal.empty()) {
+        RegionSd(r.path, "drawn in another format");
+        return false;
+    }
+    if (!r.pal.empty() && (tlut == nullptr || memcmp(tlut, r.pal.data(), r.pal.size()) != 0)) {
+        RegionSd(r.path, "drawn with another palette");
         return false;
     }
 
@@ -786,7 +803,12 @@ bool LookupRegion(const uint8_t* addr, uint32_t fmt, const uint8_t* tlut, Fast::
     const HdEntry& e = cit->second.hd;
     // Strips start at a row of the image: hand over the HD rows from the matching one.
     const float hdRow = (off / r.rowBytes) * e.vPixelScale;
-    if (!e.valid || hdRow != (float)(uint32_t)hdRow || (uint32_t)hdRow >= e.height) {
+    if (!e.valid) {
+        RegionSd(r.path, "HD file missing or not RGBA32");
+        return false;
+    }
+    if (hdRow != (float)(uint32_t)hdRow || (uint32_t)hdRow >= e.height) {
+        RegionSd(r.path, "strip does not land on a whole HD row");
         return false;
     }
     out->data = e.data.data() + (size_t)(uint32_t)hdRow * e.width * 4;
@@ -973,6 +995,10 @@ extern "C" void port_hd_image_loaded(const void* base, uint32_t size, uint32_t r
     r.path = std::string("alt/") + path;
     if (pal != nullptr) {
         r.pal.assign(static_cast<const uint8_t*>(pal), static_cast<const uint8_t*>(pal) + palBytes);
+    }
+    static std::unordered_set<std::string> sLogged;
+    if (sLogged.insert(r.path).second) {
+        fprintf(stderr, "[HD] image registered: %s (%u bytes, %u per row)\n", r.path.c_str(), size, rowBytes);
     }
     sRegions[static_cast<const uint8_t*>(base)] = std::move(r);
 }
