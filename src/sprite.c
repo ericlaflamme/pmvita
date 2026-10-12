@@ -331,8 +331,6 @@ void spr_appendGfx_component_flat(
 #ifdef PORT
 // Chain Chomp draw logging
 static s32 sPortLogSpriteDraw = 0;
-// animation of the sprite being drawn, so HD frames are only used when the whole animation has them
-static s32 sPortHdAnim = -1;
 #endif
 
 void spr_appendGfx_component(
@@ -496,7 +494,7 @@ void spr_draw_component(s32 drawOpts, SpriteComponent* component, SpriteAnimComp
         CurSpriteImgFX = component->imgfxIdx;
         pal = palettes[paletteIdx];
 #ifdef PORT
-        port_hd_sprite_draw(cacheEntry->image, sPortHdAnim);
+        port_hd_sprite_draw(cacheEntry->image, anim->cmdList);
 #endif
 
         spr_appendGfx_component(
@@ -1073,18 +1071,12 @@ s32 spr_draw_player_sprite(s32 spriteInstanceID, s32 yaw, s32 alphaIn, PAL_PTR* 
         palettes = paletteList;
     }
 
-#ifdef PORT
-    sPortHdAnim = SPR_UNPACK_ANIM(animID);
-#endif
     while (*components != PTR_LIST_END) {
         spr_draw_component(alpha | DRAW_SPRITE_USE_PLAYER_RASTERS, *components++, *animComponents, rasters, palettes, zscale, mtx);
         if (*animComponents != PTR_LIST_END) {
             animComponents++;
         }
     }
-#ifdef PORT
-    sPortHdAnim = -1;
-#endif
 
     return true;
 }
@@ -1326,7 +1318,6 @@ s32 spr_draw_npc_sprite(s32 spriteInstanceID, s32 yaw, s32 alphaIn, PAL_PTR* pal
 
 #ifdef PORT
     sPortLogSpriteDraw = (SpriteInstances[i].spriteIndex == SPR_ChainChomp);
-    sPortHdAnim = SPR_UNPACK_ANIM(animID);
 #endif
     while (*components != PTR_LIST_END) {
         spr_draw_component(alpha, *components++, *animComponents, rasters, palettes, zscale, mtx);
@@ -1336,7 +1327,6 @@ s32 spr_draw_npc_sprite(s32 spriteInstanceID, s32 yaw, s32 alphaIn, PAL_PTR* pal
     }
 #ifdef PORT
     sPortLogSpriteDraw = 0;
-    sPortHdAnim = -1;
 #endif
 
     return true;

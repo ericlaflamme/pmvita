@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -231,7 +232,7 @@ struct SpriteSlot {
 struct SpriteInfo {
     std::vector<std::array<uint8_t, kTlutBytes>> palettes;
     std::vector<int8_t> defaultPal;                   // per raster
-    std::vector<std::vector<uint16_t>> anims;         // rasters each animation shows
+    std::unordered_map<const void*, std::vector<uint16_t>> compRasters; // component cmdList -> rasters it shows
 };
 // Mirrors of the PORT-built SpriteAnimData (src/101b90_len_8f0.c).
 struct GameRaster {
@@ -253,8 +254,20 @@ std::unordered_map<const void*, SpriteRaster> sSpriteRasters;
 std::unordered_map<uint32_t, SpriteInfo> sSprites; // owner -> info
 std::unordered_map<const void*, uint32_t> sSpritePalByAddr;
 std::unordered_map<uint64_t, SpriteSlot> sSpriteCache; // (raster key << 32) | palette key
-std::unordered_map<uint64_t, bool> sAnimHasHd;        // ((owner | anim) << 32) | override palette key
-std::unordered_map<const void*, int16_t> sDrawAnim;  // raster image -> animation it was last drawn in
+struct CompHdKey {
+    const void* cmdList;
+    uint32_t owner, overridePal;
+    bool operator==(const CompHdKey& o) const {
+        return cmdList == o.cmdList && owner == o.owner && overridePal == o.overridePal;
+    }
+};
+struct CompHdKeyHash {
+    size_t operator()(const CompHdKey& k) const {
+        return std::hash<const void*>()(k.cmdList) * 31 + ((size_t)k.owner ^ k.overridePal);
+    }
+};
+std::unordered_map<CompHdKey, bool, CompHdKeyHash> sCompHasHd; // cleared on sprite load: cmdLists move
+std::unordered_map<const void*, const void*> sDrawComp;        // raster image -> cmdList it was last drawn by
 size_t sSpriteBytes = 0;
 uint32_t sFrame = 0;
 
@@ -377,13 +390,13 @@ bool LoadHd(const std::string& path, HdEntry& e) {
 }
 
 // The path is only built on a cache miss; this runs for every glyph drawn each frame.
-template <typename Map, typename Key, typename PathFn>
-bool Fetch(Map& cache, const Key& key, PathFn makePath, Fast::RawTexReplacement* out) {
+template <typename Map, typename Key, typename PathFn, typename LoadFn>
+bool Fetch(Map& cache, const Key& key, PathFn makePath, LoadFn load, Fast::RawTexReplacement* out) {
     auto it = cache.find(key);
     if (it == cache.end()) {
         std::string path = makePath();
         it = cache.emplace(key, HdEntry{}).first;
-        if (LoadHd(path, it->second) && sLoaded++ == 0) {
+        if (load(path, it->second) && sLoaded++ == 0) {
             fprintf(stderr, "[HD] first replacement: %s -> %ux%u\n", path.c_str(), it->second.width,
                     it->second.height);
         }
@@ -397,6 +410,98 @@ bool Fetch(Map& cache, const Key& key, PathFn makePath, Fast::RawTexReplacement*
     out->height = e.height;
     out->h_byte_scale = e.hByteScale;
     out->v_pixel_scale = e.vPixelScale;
+    return true;
+}
+
+template <typename Map, typename Key, typename PathFn>
+bool Fetch(Map& cache, const Key& key, PathFn makePath, Fast::RawTexReplacement* out) {
+    return Fetch(cache, key, makePath, LoadHd, out);
+}
+
+// The pack only has the glyph/palette pairs its dumper saw. A missing pair is the plain glyph recolored
+// by a gray -> RGBA ramp learned from glyphs the pack has both plain and in that palette.
+constexpr uint32_t kRampSteps = 32;
+constexpr uint32_t kRampDonors = 2;
+using CharsetRamp = std::array<std::array<float, 4>, kRampSteps>; // r, g, b, alpha factor
+std::map<std::pair<const HdCharset*, uint32_t>, std::optional<CharsetRamp>> sCharsetRamps;
+
+uint32_t RampStep(const uint8_t* px) {
+    return (px[0] + px[1] + px[2]) / 3 * kRampSteps / 256;
+}
+
+std::optional<CharsetRamp> LearnCharsetRamp(const HdCharset& cs, const std::string& suffix) {
+    std::array<std::array<float, 5>, kRampSteps> acc{};
+    uint32_t donors = 0;
+    for (uint32_t g = 0; g < cs.glyphCount && donors < kRampDonors; g++) {
+        const std::string plainPath = cs.prefix + std::to_string(g);
+        HdEntry plain, tinted;
+        if (!LoadHd(plainPath + suffix, tinted) || !LoadHd(plainPath, plain) || plain.width != tinted.width ||
+            plain.height != tinted.height) {
+            continue;
+        }
+        donors++;
+        for (size_t i = 0; i < plain.data.size(); i += 4) {
+            const uint8_t* p = &plain.data[i];
+            const uint8_t* t = &tinted.data[i];
+            if (p[3] < 128) {
+                continue;
+            }
+            auto& s = acc[RampStep(p)];
+            s[0] += t[0];
+            s[1] += t[1];
+            s[2] += t[2];
+            s[3] += (float)t[3] / p[3];
+            s[4] += 1;
+        }
+    }
+
+    std::vector<uint32_t> known;
+    for (uint32_t k = 0; k < kRampSteps; k++) {
+        if (acc[k][4] > 0) {
+            known.push_back(k);
+        }
+    }
+    if (known.empty()) {
+        return std::nullopt;
+    }
+    CharsetRamp ramp;
+    for (uint32_t k = 0; k < kRampSteps; k++) {
+        auto hi = std::lower_bound(known.begin(), known.end(), k);
+        uint32_t l, h;
+        if (hi == known.end()) {
+            l = h = known.back();
+        } else if (*hi == k || hi == known.begin()) {
+            l = h = *hi;
+        } else {
+            l = *(hi - 1);
+            h = *hi;
+        }
+        const float t = h != l ? (float)(k - l) / (h - l) : 0;
+        for (int c = 0; c < 4; c++) {
+            ramp[k][c] = (acc[l][c] / acc[l][4]) * (1 - t) + (acc[h][c] / acc[h][4]) * t;
+        }
+    }
+    return ramp;
+}
+
+bool RecolorGlyph(const HdCharset& cs, uint32_t glyph, uint32_t pal, HdEntry& e) {
+    auto it = sCharsetRamps.find({ &cs, pal });
+    if (it == sCharsetRamps.end()) {
+        it = sCharsetRamps.emplace(std::make_pair(&cs, pal), LearnCharsetRamp(cs, cs.palPrefix + std::to_string(pal)))
+                 .first;
+    }
+    if (!it->second || !LoadHd(cs.prefix + std::to_string(glyph), e)) {
+        return false;
+    }
+    const CharsetRamp& ramp = *it->second;
+    for (size_t i = 0; i < e.data.size(); i += 4) {
+        uint8_t* p = &e.data[i];
+        const auto& c = ramp[RampStep(p)];
+        p[0] = (uint8_t)(c[0] + 0.5f);
+        p[1] = (uint8_t)(c[1] + 0.5f);
+        p[2] = (uint8_t)(c[2] + 0.5f);
+        p[3] = (uint8_t)std::min(255.0f, p[3] * c[3] + 0.5f);
+    }
     return true;
 }
 
@@ -423,6 +528,9 @@ bool LookupCharset(const HdCharset& cs, const uint8_t* addr, const uint8_t* tlut
                 path += cs.palPrefix + std::to_string(pal);
             }
             return path;
+        },
+        [&](const std::string& path, HdEntry& e) {
+            return LoadHd(path, e) || (pal != 0 && RecolorGlyph(cs, glyph, pal, e));
         },
         out);
 }
@@ -562,7 +670,7 @@ std::string SpriteHdPath(uint32_t owner, uint32_t raster, uint32_t palKey, int d
 
 // Player back sprites keep their animations in the front sprite before them.
 const SpriteInfo* AnimSource(uint32_t owner, const SpriteInfo& info) {
-    if (!info.anims.empty() || !(owner & kPlayerBit) || (owner & 0x7FFF0000u) == 0) {
+    if (!info.compRasters.empty() || !(owner & kPlayerBit) || (owner & 0x7FFF0000u) == 0) {
         return &info;
     }
     auto it = sSprites.find(owner - 0x10000u);
@@ -573,12 +681,12 @@ int DefaultPal(const SpriteInfo& info, uint32_t raster) {
     return raster < info.defaultPal.size() ? std::max<int>(0, info.defaultPal[raster]) : 0;
 }
 
-// A color variant the pack only has for some frames would flicker HD/SD within one animation; keep those SD.
-bool AnimHasHd(uint32_t owner, const SpriteInfo& info, uint32_t anim, const std::vector<uint16_t>& rasters,
+// A color variant the pack only has for some frames would flicker HD/SD within one component; keep those SD.
+bool CompHasHd(uint32_t owner, const SpriteInfo& info, const void* cmdList, const std::vector<uint16_t>& rasters,
                uint32_t overridePal) {
-    const uint64_t key = ((uint64_t)(owner | anim) << 32) | overridePal;
-    auto it = sAnimHasHd.find(key);
-    if (it != sAnimHasHd.end()) {
+    const CompHdKey key{ cmdList, owner, overridePal };
+    auto it = sCompHasHd.find(key);
+    if (it != sCompHasHd.end()) {
         return it->second;
     }
     bool ok = true;
@@ -593,7 +701,7 @@ bool AnimHasHd(uint32_t owner, const SpriteInfo& info, uint32_t anim, const std:
             break;
         }
     }
-    sAnimHasHd.emplace(key, ok);
+    sCompHasHd.emplace(key, ok);
     return ok;
 }
 
@@ -604,23 +712,25 @@ std::string SpritePath(uint32_t rasterKey, uint32_t palKey) {
     return SpriteHdPath(owner, raster, palKey, sit != sSprites.end() ? DefaultPal(sit->second, raster) : 0);
 }
 
-// The pack only has the frames its dumper saw; an animation missing some would flicker HD/SD, so keep it SD.
+// The pack only has the frames its dumper saw. Each sprite part (component) runs its own command list; one
+// missing some of its frames would flicker HD/SD, so that part stays SD while the others can still be HD.
 bool AnimFitsHd(uint32_t rasterKey, uint32_t palKey, const void* img) {
     const uint32_t owner = rasterKey & 0xFFFF0000u;
     auto sit = sSprites.find(owner);
-    auto ait = sDrawAnim.find(img);
-    if (sit == sSprites.end() || ait == sDrawAnim.end()) {
+    auto dit = sDrawComp.find(img);
+    if (sit == sSprites.end() || dit == sDrawComp.end()) {
         return true;
     }
     const SpriteInfo& info = sit->second;
     const SpriteInfo* animInfo = AnimSource(owner, info);
-    if (ait->second < 0 || (size_t)ait->second >= animInfo->anims.size()) {
+    auto cit = animInfo->compRasters.find(dit->second);
+    if (cit == animInfo->compRasters.end()) {
         return true;
     }
     // A raster on its own non-zero palette ignores the animation's color variant; assume the plain one.
     const int def = DefaultPal(info, rasterKey & 0xFFFF);
     const uint32_t overridePal = (def != 0 && palKey == (owner | def)) ? owner : palKey;
-    return AnimHasHd(owner, info, ait->second, animInfo->anims[ait->second], overridePal);
+    return CompHasHd(owner, info, dit->second, cit->second, overridePal);
 }
 
 // Only drop sprites unused for a couple of frames: the interpreter may still read this frame's data.
@@ -673,9 +783,12 @@ bool FetchSprite(uint32_t rasterKey, uint32_t palKey, Fast::RawTexReplacement* o
 }
 
 bool LookupSprite(const void* addr, const SpriteRaster& r, const uint8_t* tlut, Fast::RawTexReplacement* out) {
-    // Lit maps draw each sprite through a second, per-frame palette that an RGBA stand-in can't carry.
-    if (tlut == nullptr || (gSpriteShadingProfile != nullptr && (*gSpriteShadingProfile & 1))) {
+    if (tlut == nullptr) {
         return false;
+    }
+    // Lit maps also read each sprite through a per-frame shading palette (tile 0, TLUT 1).
+    if (gSpriteShadingProfile != nullptr && (*gSpriteShadingProfile & 1)) {
+        out->coverage_tlut = tlut;
     }
     // NPCs often draw from copies of their palettes, so match by content first.
     const uint32_t owner = r.key & 0xFFFF0000u;
@@ -837,9 +950,12 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
 
     auto* const* anims = reinterpret_cast<GameAnimComp** const*>(sd + 1);
     for (uint32_t a = 0; anims[a] != end; a++) {
-        std::vector<uint16_t> rasters;
         for (GameAnimComp* const* c = anims[a]; *c != end; c++) {
             const uint16_t* cmd = (*c)->cmdList;
+            if (info.compRasters.count(cmd) != 0) {
+                continue;
+            }
+            std::vector<uint16_t> rasters;
             const int n = (*c)->cmdListSize / 2;
             for (int i = 0; i < n;) {
                 const uint16_t v = cmd[i];
@@ -873,16 +989,17 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
                         break;
                 }
             }
+            std::sort(rasters.begin(), rasters.end());
+            rasters.erase(std::unique(rasters.begin(), rasters.end()), rasters.end());
+            info.compRasters.emplace(cmd, std::move(rasters));
         }
-        std::sort(rasters.begin(), rasters.end());
-        rasters.erase(std::unique(rasters.begin(), rasters.end()), rasters.end());
-        info.anims.push_back(std::move(rasters));
     }
+    sCompHasHd.clear();
 }
 
-extern "C" void port_hd_sprite_draw(const void* img, int32_t anim) {
+extern "C" void port_hd_sprite_draw(const void* img, const void* cmdList) {
     if (img != nullptr) {
-        sDrawAnim[img] = (int16_t)anim;
+        sDrawComp[img] = cmdList;
     }
 }
 
