@@ -57,8 +57,7 @@ std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, const void* 
                                                   uint32_t* hdRowsSkipped, const uint8_t** coverageTlut);
 /* port/hd_textures.cpp: the sprite file to draw for a registered sprite path under this TLUT
  * (palette variant, "" to keep it SD); other paths come back unchanged. */
-std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
-                                const uint8_t** coverageTlut);
+std::string PortHdSpriteVariant(const std::string& path, const void* tlut, const uint8_t** coverageTlut);
 /* port/hd_textures.cpp: shrink an RGBA32 HD texture to 4x the original, keeping a whole scale ratio. */
 void PortHdShrinkTexture(Fast::Texture* tex);
 #endif

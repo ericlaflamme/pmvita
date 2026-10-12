@@ -34,10 +34,9 @@ void port_hd_icon_loaded(const void* dest, u32 iconOffset, u32 size);
 /**
  * Sprites: the pack names them alt/sprites/{npc_sprite_%03d|player_sprite_%d}_raster_<n>[@<owner>_pal_<p>].
  * The mod system (port/ModAssets.cpp) tracks raster buffers; loaded() records each sprite's palettes and the
- * rasters every animation part shows, draw() which part is drawing a raster, to pick the variant.
+ * rasters every animation part shows. Sprite draws mark their part in the display list (gSPPortSpritePart).
  */
 void port_hd_sprite_loaded(s32 isPlayer, s32 sprite, const void* spriteAnimData);
-void port_hd_sprite_draw(const void* img, const void* cmdList);
 void port_hd_frame(void);
 
 /**

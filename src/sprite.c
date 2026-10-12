@@ -494,7 +494,7 @@ void spr_draw_component(s32 drawOpts, SpriteComponent* component, SpriteAnimComp
         CurSpriteImgFX = component->imgfxIdx;
         pal = palettes[paletteIdx];
 #ifdef PORT
-        port_hd_sprite_draw(cacheEntry->image, anim->cmdList);
+        gSPPortSpritePart(gMainGfxPos++, anim->cmdList);
 #endif
 
         spr_appendGfx_component(
@@ -508,6 +508,9 @@ void spr_draw_component(s32 drawOpts, SpriteComponent* component, SpriteAnimComp
             component->scale.z,
             drawOpts, pal, mtx
         );
+#ifdef PORT
+        gSPPortSpritePart(gMainGfxPos++, NULL);
+#endif
         component->imgfxIdx = CurSpriteImgFX;
     }
 }

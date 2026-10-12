@@ -191,6 +191,7 @@
 #define G_SETINTENSITY 0x40
 #define G_LOAD_SHADER 0x43
 #define G_SET_STRICT_DECAL 0x4b
+#define G_PORT_SPRITE_PART 0x4c
 #define G_SETTILESIZE_INTERP 0x44
 #define G_SETTARGETINTERPINDEX 0x45
 
@@ -2816,6 +2817,14 @@ typedef union Gfx {
         _g->words.w1 = (on);                               \
     }
 #define gSPUnloadShader(pkt) gDma1p(pkt, G_LOAD_SHADER, 0, 0, 0)
+// PORT: the sprite part (its command list) the following texture loads draw, or NULL after it
+#define gSPPortSpritePart(pkt, part)                       \
+    {                                                      \
+        Gfx* _g = (Gfx*)(pkt);                             \
+                                                           \
+        _g->words.w0 = _SHIFTL(G_PORT_SPRITE_PART, 24, 8); \
+        _g->words.w1 = (uintptr_t)(part);                  \
+    }
 
 #define gSPExtraGeometryMode(pkt, c, s)                                                 \
     _DW({                                                                               \

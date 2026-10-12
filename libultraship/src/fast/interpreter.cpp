@@ -4809,6 +4809,13 @@ bool gfx_set_strict_decal_handler_custom(F3DGfx** cmd0) {
     return false;
 }
 
+extern "C" void port_hd_sprite_part(const void* cmdList);
+
+bool gfx_port_sprite_part_handler_custom(F3DGfx** cmd0) {
+    port_hd_sprite_part((const void*)(*cmd0)->words.w1);
+    return false;
+}
+
 bool gfx_set_intensity_handler_custom(F3DGfx** cmd0) {
     Interpreter* gfx = mInstanceRaw;
     if (!gfx) return false;
@@ -5077,6 +5084,7 @@ static constexpr UcodeHandler otrHandlers = {
     { OTR_G_SETTIMG_OTR_HASH,
       { "G_SETTIMG_OTR_HASH", gfx_set_timg_otr_hash_handler_custom } },       // G_SETTIMG_OTR_HASH (0x20)
     { OPCODE(0x4b), { "G_SET_STRICT_DECAL", gfx_set_strict_decal_handler_custom } },
+    { OPCODE(0x4c), { "G_PORT_SPRITE_PART", gfx_port_sprite_part_handler_custom } },
     { OTR_G_SETFB, { "G_SETFB", gfx_set_fb_handler_custom } },                // G_SETFB (0x21)
     { OTR_G_RESETFB, { "G_RESETFB", gfx_reset_fb_handler_custom } },          // G_RESETFB (0x22)
     { OTR_G_SETTIMG_FB, { "G_SETTIMG_FB", gfx_set_timg_fb_handler_custom } }, // G_SETTIMG_FB (0x23)
@@ -5357,6 +5365,12 @@ static void gfx_step() {
         handled = true;
         sUnhandledCount = 0;
         if (gfx_set_strict_decal_handler_custom(&cmd)) {
+            return;
+        }
+    } else if (opcode == OPCODE(0x4c)) {
+        handled = true;
+        sUnhandledCount = 0;
+        if (gfx_port_sprite_part_handler_custom(&cmd)) {
             return;
         }
     } else if (opcode == OTR_G_COPYFB) {

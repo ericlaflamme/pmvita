@@ -246,7 +246,7 @@ struct CompHdKeyHash {
     }
 };
 std::unordered_map<CompHdKey, bool, CompHdKeyHash> sCompHasHd; // cleared on sprite load: cmdLists move
-std::unordered_map<const void*, const void*> sDrawComp;        // raster image -> cmdList it was last drawn by
+const void* sCurPart = nullptr; // sprite part being drawn, from the display list (gSPPortSpritePart)
 uint32_t sFrame = 0;
 
 // Large images (backgrounds, title, logos, portraits...) that the game draws as strips of rows.
@@ -733,34 +733,33 @@ std::string SpritePath(uint32_t rasterKey, uint32_t palKey) {
 
 // The pack only has the frames its dumper saw. Each sprite part (component) runs its own command list; one
 // missing some of its frames would flicker HD/SD, so that part stays SD while the others can still be HD.
-bool AnimFitsHd(uint32_t rasterKey, uint32_t palKey, const void* img) {
+bool AnimFitsHd(uint32_t rasterKey, uint32_t palKey) {
     const uint32_t owner = rasterKey & 0xFFFF0000u;
     auto sit = sSprites.find(owner);
-    auto dit = sDrawComp.find(img);
-    if (sit == sSprites.end() || dit == sDrawComp.end()) {
+    if (sit == sSprites.end() || sCurPart == nullptr) {
         return true;
     }
     const SpriteInfo& info = sit->second;
     const SpriteInfo* animInfo = AnimSource(owner, info);
-    auto cit = animInfo->compRasters.find(dit->second);
+    auto cit = animInfo->compRasters.find(sCurPart);
     if (cit == animInfo->compRasters.end()) {
         return true;
     }
     // A raster on its own non-zero palette ignores the animation's color variant; assume the plain one.
     const int def = DefaultPal(info, rasterKey & 0xFFFF);
     const uint32_t overridePal = (def != 0 && palKey == (owner | def)) ? owner : palKey;
-    return CompHasHd(owner, info, dit->second, cit->second, overridePal);
+    return CompHasHd(owner, info, sCurPart, cit->second, overridePal);
 }
 
 // HD file for a sprite raster drawn with this TLUT: the variant the pack colored with it, or "" for SD.
-std::string SpriteVariant(uint32_t rasterKey, const void* img, const uint8_t* tlut) {
+std::string SpriteVariant(uint32_t rasterKey, const uint8_t* tlut) {
     // NPCs often draw from copies of their palettes, so match by content first.
     const uint32_t owner = rasterKey & 0xFFFF0000u;
     auto own = sSprites.find(owner);
     if (own != sSprites.end()) {
         const auto& pals = own->second.palettes;
         for (uint32_t q = 0; q < pals.size(); q++) {
-            if (memcmp(tlut, pals[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, owner | q, img)) {
+            if (memcmp(tlut, pals[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, owner | q)) {
                 continue;
             }
             std::string path = SpritePath(rasterKey, owner | q);
@@ -776,7 +775,7 @@ std::string SpriteVariant(uint32_t rasterKey, const void* img, const uint8_t* tl
     auto fit = sSprites.find(pit->second & 0xFFFF0000u);
     const uint32_t q = pit->second & 0xFFFF;
     if (fit == sSprites.end() || q >= fit->second.palettes.size() ||
-        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, pit->second, img)) {
+        memcmp(tlut, fit->second.palettes[q].data(), kTlutBytes) != 0 || !AnimFitsHd(rasterKey, pit->second)) {
         return "";
     }
     return SpritePath(rasterKey, pit->second);
@@ -955,10 +954,8 @@ extern "C" void port_hd_sprite_loaded(int32_t isPlayer, int32_t sprite, const vo
     sCompHasHd.clear();
 }
 
-extern "C" void port_hd_sprite_draw(const void* img, const void* cmdList) {
-    if (img != nullptr) {
-        sDrawComp[img] = cmdList;
-    }
+extern "C" void port_hd_sprite_part(const void* cmdList) {
+    sCurPart = cmdList;
 }
 
 void PortHdShrinkTexture(Fast::Texture* tex) {
@@ -985,8 +982,7 @@ void PortHdShrinkTexture(Fast::Texture* tex) {
     tex->VPixelScale = SnapScale(tex->VPixelScale * num / den);
 }
 
-std::string PortHdSpriteVariant(const std::string& path, const void* img, const void* tlut,
-                                const uint8_t** coverageTlut) {
+std::string PortHdSpriteVariant(const std::string& path, const void* tlut, const uint8_t** coverageTlut) {
     unsigned sprite, raster;
     bool isPlayer;
     if (sscanf(path.c_str(), "sprites/npc_sprite_%u_raster_%u", &sprite, &raster) == 2) {
@@ -1001,7 +997,7 @@ std::string PortHdSpriteVariant(const std::string& path, const void* img, const 
     }
     const uint8_t* t = static_cast<const uint8_t*>(tlut);
     const uint32_t key = (isPlayer ? kPlayerBit : 0) | (sprite << 16) | raster;
-    std::string variant = SpriteVariant(key, img, t);
+    std::string variant = SpriteVariant(key, t);
     if (variant.empty()) {
         return "";
     }

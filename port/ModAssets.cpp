@@ -344,7 +344,7 @@ std::shared_ptr<Fast::Texture> Port_ModTextureFor(const void* addr, const void* 
     }
     const uint32_t rowsIn = inner != 0 ? inner / it->second.rowBytes : 0;
 
-    const std::string path = PortHdSpriteVariant(it->second.path, addr, tlut, coverageTlut);
+    const std::string path = PortHdSpriteVariant(it->second.path, tlut, coverageTlut);
     if (path.empty()) {
         return nullptr;
     }
