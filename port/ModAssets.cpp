@@ -31,8 +31,9 @@ extern "C" void gfx_texture_cache_clear(void);
 namespace {
 
 constexpr uint8_t kMsgEnd = 0xFD;
-// HD textures above this many texels are halved until they fit; Vita memory is tight
-constexpr uint32_t kMaxTexels = 256 * 256;
+// HD textures above this many texels are halved until they fit; Vita memory is tight.
+// Room for a 4x background (1184x800): at 256x256 they came back at their original SD size.
+constexpr uint32_t kMaxTexels = 1024 * 1024;
 // bytes hashed to confirm a registered buffer still holds the texture it was registered with
 constexpr uint32_t kSigBytes = 64;
 
